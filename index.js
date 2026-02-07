@@ -1,17 +1,23 @@
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+import express from 'express';
+import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// ESM __dirname workaround
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.8.0 iniciando...');
-console.log('[INIT] ✅ Browser string FIXO (sem Browsers.appropriate)');
+console.log('[INIT] 🚀 Baileys Server v2.9.0 iniciando...');
+console.log('[INIT] 📦 Baileys 7.0.0-rc.9 (ESM)');
+console.log('[INIT] 🖥️ Browser: Browsers.macOS("Desktop")');
 console.log('[INIT] Node version:', process.version);
 console.log('[INIT] Platform:', process.platform);
 console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(60));
 
-const VERSION = "v2.8.0";
+const VERSION = "v2.9.0";
 const app = express();
 
 app.use(cors());
@@ -22,11 +28,6 @@ const WEBHOOK_URL = process.env.SUPABASE_WEBHOOK_URL || '';
 const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
 const MAX_RETRIES = 3;
 
-// ========== BROWSER STRING FIXO ==========
-// Este é o browser string que funciona - NÃO usar Browsers.appropriate()
-const BROWSER = ["Chrome (Linux)", "Chrome", "130.0.6723.70"];
-
-console.log('[CONFIG] Browser string FIXO:', JSON.stringify(BROWSER));
 console.log('[CONFIG] Webhook URL:', WEBHOOK_URL ? 'Configurada ✓' : 'NÃO configurada ⚠');
 console.log('[CONFIG] Sessions dir:', SESSIONS_DIR);
 
@@ -44,7 +45,7 @@ const sessions = new Map();
 let makeWASocket = null;
 let useMultiFileAuthState = null;
 let DisconnectReason = null;
-let makeCacheableSignalKeyStore = null;
+let Browsers = null;
 let QRCode = null;
 let pino = null;
 let baileysLoaded = false;
@@ -69,7 +70,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ============ CRIAR SOCKET (v2.8.0 - BROWSER STRING FIXO) ============
+// ============ CRIAR SOCKET (v2.9.0 - ESM + Browsers.macOS) ============
 async function createSocketForSession(session) {
   const { sessionId, instanceName } = session;
   const sessionPath = path.join(SESSIONS_DIR, sessionId);
@@ -104,11 +105,8 @@ async function createSocketForSession(session) {
     throw e;
   }
   
-  // Aguardar um pouco antes de carregar auth
-  await sleep(1000);
-  
-  // Carregar auth state
-  console.log('[SOCKET] Carregando auth state...');
+  // Carregar auth state - Baileys 7.x usa apenas state direto
+  console.log('[SOCKET] Carregando auth state (Baileys 7.x)...');
   let state, saveCreds;
   try {
     const authResult = await useMultiFileAuthState(sessionPath);
@@ -121,35 +119,29 @@ async function createSocketForSession(session) {
   }
   
   // Aguardar antes de criar socket
-  console.log('[SOCKET] Aguardando 2s antes de criar socket...');
-  await sleep(2000);
+  console.log('[SOCKET] Aguardando 1s antes de criar socket...');
+  await sleep(1000);
   
-  // ========== CRIAR SOCKET - BROWSER STRING FIXO ==========
-  console.log('[SOCKET] Criando socket com browser FIXO...');
-  console.log('[SOCKET] Browser:', JSON.stringify(BROWSER));
+  // ========== CRIAR SOCKET - CONFIGURAÇÃO OFICIAL BAILEYS 7.x ==========
+  console.log('[SOCKET] Criando socket com Browsers.macOS("Desktop")...');
   
   const logger = pino({ level: 'silent' });
   
-  // CONFIGURAÇÃO COM BROWSER STRING FIXO
-  const socketConfig = {
-    logger,
+  // CONFIGURAÇÃO MÍNIMA OFICIAL - Baileys 7.x
+  const sock = makeWASocket({
+    auth: state,  // Direto, sem makeCacheableSignalKeyStore
+    browser: Browsers.macOS("Desktop"),  // Browser string OFICIAL
     printQRInTerminal: true,
-    browser: BROWSER, // <<< BROWSER STRING FIXO - NÃO MUDE!
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger)
-    },
+    logger: logger,
     syncFullHistory: false,
     markOnlineOnConnect: true,
     generateHighQualityLinkPreview: false,
     getMessage: async () => undefined
-  };
-  
-  const sock = makeWASocket(socketConfig);
+  });
   
   session.socket = sock;
   session.socketCreatedAt = Date.now();
-  console.log('[SOCKET] ✓ Socket criado!');
+  console.log('[SOCKET] ✓ Socket criado com Browsers.macOS("Desktop")!');
   
   // ========== REGISTRAR LISTENERS ==========
   console.log('[SOCKET] Registrando listeners...');
@@ -249,6 +241,29 @@ async function createSocketForSession(session) {
         try {
           fs.rmSync(sessionPath, { recursive: true, force: true });
         } catch (e) {}
+        return;
+      }
+      
+      // Erro 405 = Method Not Allowed - problema de protocolo
+      if (statusCode === 405) {
+        console.log('[405] Method Not Allowed - problema de protocolo');
+        console.log('[405] Usando Baileys 7.x com Browsers.macOS("Desktop")');
+        session.retryCount++;
+        if (session.retryCount < MAX_RETRIES) {
+          session.status = 'reconnecting';
+          console.log(`[405] Tentando reconectar em 10s (tentativa ${session.retryCount})...`);
+          setTimeout(async () => {
+            try {
+              await createSocketForSession(session);
+            } catch (err) {
+              console.error('[405] Erro ao reconectar:', err.message);
+              session.status = 'failed';
+            }
+          }, 10000);
+        } else {
+          console.log('[405] Esgotou tentativas - pode ser bloqueio de IP');
+          session.status = 'failed';
+        }
         return;
       }
       
@@ -371,7 +386,8 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     version: VERSION,
-    browser: BROWSER,
+    baileys: '7.0.0-rc.9',
+    browser: 'Browsers.macOS("Desktop")',
     sessions: sessions.size,
     baileysLoaded,
     timestamp: new Date().toISOString()
@@ -544,63 +560,58 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(60));
   console.log(`🚀 [${VERSION}] Servidor HTTP na porta ${PORT}`);
   console.log(`📡 Webhook: ${WEBHOOK_URL || 'Não configurada'}`);
-  console.log(`📦 Baileys: 6.7.9 (estável)`);
-  console.log(`🖥️ Browser: ${JSON.stringify(BROWSER)}`);
+  console.log(`📦 Baileys: 7.0.0-rc.9 (ESM)`);
+  console.log(`🖥️ Browser: Browsers.macOS("Desktop")`);
   console.log('='.repeat(60));
   console.log('');
   loadBaileys();
 });
 
-// ============ CARREGAR BAILEYS ==========
+// ============ CARREGAR BAILEYS (ESM) ==========
 async function loadBaileys() {
   console.log('[BAILEYS] ========================================');
-  console.log('[BAILEYS] Carregando Baileys 6.7.9...');
+  console.log('[BAILEYS] Carregando Baileys 7.0.0-rc.9 (ESM)...');
   console.log('[BAILEYS] ========================================');
   
   try {
-    QRCode = require('qrcode');
+    // Importar módulos ESM
+    const qrcodeModule = await import('qrcode');
+    QRCode = qrcodeModule.default;
     console.log('[BAILEYS] ✓ qrcode');
     
-    pino = require('pino');
+    const pinoModule = await import('pino');
+    pino = pinoModule.default;
     console.log('[BAILEYS] ✓ pino');
     
-    console.log('[BAILEYS] Importando @whiskeysockets/baileys...');
+    console.log('[BAILEYS] Importando @whiskeysockets/baileys 7.x...');
     const baileys = await import('@whiskeysockets/baileys');
     
-    // Detectar exports
-    if (typeof baileys.default === 'function') {
-      makeWASocket = baileys.default;
-      console.log('[BAILEYS] ✓ makeWASocket via default');
-    } else if (baileys.default && typeof baileys.default.default === 'function') {
-      makeWASocket = baileys.default.default;
-      console.log('[BAILEYS] ✓ makeWASocket via default.default');
-    } else if (typeof baileys.makeWASocket === 'function') {
-      makeWASocket = baileys.makeWASocket;
-      console.log('[BAILEYS] ✓ makeWASocket via named export');
-    } else {
-      console.log('[BAILEYS] Exports disponíveis:', Object.keys(baileys));
-      throw new Error('makeWASocket não encontrado');
-    }
+    // Baileys 7.x exports
+    makeWASocket = baileys.default || baileys.makeWASocket;
+    useMultiFileAuthState = baileys.useMultiFileAuthState;
+    DisconnectReason = baileys.DisconnectReason;
+    Browsers = baileys.Browsers;
     
-    // Funções auxiliares
-    useMultiFileAuthState = baileys.useMultiFileAuthState || baileys.default?.useMultiFileAuthState;
-    DisconnectReason = baileys.DisconnectReason || baileys.default?.DisconnectReason;
-    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore || baileys.default?.makeCacheableSignalKeyStore;
-    
+    console.log('[BAILEYS] ✓ makeWASocket:', typeof makeWASocket);
     console.log('[BAILEYS] ✓ useMultiFileAuthState:', typeof useMultiFileAuthState);
-    console.log('[BAILEYS] ✓ makeCacheableSignalKeyStore:', typeof makeCacheableSignalKeyStore);
     console.log('[BAILEYS] ✓ DisconnectReason:', typeof DisconnectReason);
+    console.log('[BAILEYS] ✓ Browsers:', typeof Browsers);
     
-    if (!useMultiFileAuthState || !makeCacheableSignalKeyStore) {
-      throw new Error('Funções auxiliares não encontradas');
+    if (!makeWASocket || !useMultiFileAuthState || !Browsers) {
+      console.log('[BAILEYS] Exports disponíveis:', Object.keys(baileys));
+      throw new Error('Exports do Baileys 7.x não encontrados');
     }
+    
+    // Testar Browsers.macOS
+    const browserTest = Browsers.macOS("Desktop");
+    console.log('[BAILEYS] ✓ Browsers.macOS("Desktop"):', JSON.stringify(browserTest));
     
     baileysLoaded = true;
     
     console.log('');
     console.log('[BAILEYS] ========================================');
-    console.log('[BAILEYS] ✅ BAILEYS 6.7.9 PRONTO!');
-    console.log(`[BAILEYS] Browser: ${JSON.stringify(BROWSER)}`);
+    console.log('[BAILEYS] ✅ BAILEYS 7.0.0-rc.9 PRONTO!');
+    console.log('[BAILEYS] Browser: Browsers.macOS("Desktop")');
     console.log('[BAILEYS] ========================================');
     console.log('');
   } catch (err) {

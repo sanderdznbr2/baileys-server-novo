@@ -1,21 +1,22 @@
-# 🚀 Baileys Server v2.8.0 - BROWSER STRING FIXO
+# 🚀 Baileys Server v2.9.0 - ESM + Baileys 7.x
 
-## ✅ Correções v2.8.0
+## ✅ Correções v2.9.0
 
-O problema anterior era que `Browsers.appropriate('Desktop')` retornava 
-`['Ubuntu', 'Desktop', '6.12.12+bpo-cloud-amd64']` que o WhatsApp não reconhece.
+Esta versão resolve o **Erro 405** usando Baileys 7.x com configuração oficial.
 
-### Mudanças:
-- ✅ Browser string FIXO: ["Chrome (Linux)", "Chrome", "130.0.6723.70"]
-- ✅ Baileys 6.7.9 (versão estável)
-- ✅ Sem dependência de Browsers.appropriate()
-- ✅ Delay de 2s antes de criar socket
+### Mudanças Principais:
+- ✅ **Baileys 7.0.0-rc.9** (versão mais recente)
+- ✅ **ESM** (type: module) - obrigatório para Baileys 7.x
+- ✅ **Browsers.macOS("Desktop")** - browser string oficial
+- ✅ **Auth simplificado** - sem makeCacheableSignalKeyStore
+- ✅ **Sem versão manual** - deixa o Baileys negociar automaticamente
 
 ## Deploy no Railway
 
 ### 1. Suba para o GitHub
 - Crie um repositório no GitHub
-- Faça upload destes arquivos
+- Faça upload de TODOS estes arquivos
+- **IMPORTANTE**: O package.json deve ter "type": "module"
 
 ### 2. No Railway
 1. New Project → Deploy from GitHub
@@ -24,15 +25,26 @@ O problema anterior era que `Browsers.appropriate('Desktop')` retornava
    `SUPABASE_WEBHOOK_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook`
 
 ### 3. Pronto!
-O servidor vai iniciar automaticamente.
+O servidor vai iniciar automaticamente (3-4 minutos na primeira vez).
 
 ## Verificação de Logs
 
 Nos logs do Railway, você deve ver:
 
 ```
-[BAILEYS] ✓ Módulo importado
-[SOCKET] Browser: ["Chrome (Linux)", "Chrome", "130.0.6723.70"]
-[QR] 🎉 QR Code recebido!
-[CONNECTED] ✅ WhatsApp conectado!
+[INIT] Baileys Server v2.9.0 iniciando...
+[INIT] Baileys 7.0.0-rc.9 (ESM)
+[INIT] Browser: Browsers.macOS("Desktop")
+[BAILEYS] ✅ Carregado com sucesso!
+[SOCKET] Criando com Browsers.macOS("Desktop")...
+[QR] ✅ QR Code recebido!
 ```
+
+## Nota sobre Erro 405
+
+O erro 405 é uma rejeição ativa do WhatsApp. Com v2.9.0:
+- Usamos a versão mais recente do Baileys
+- Usamos o browser string oficial
+- Deixamos o protocolo ser negociado automaticamente
+
+Se ainda persistir, pode ser bloqueio de IP/região pelo WhatsApp.
