@@ -1,20 +1,24 @@
-# 🚀 Baileys Server v2.9.6 - Sync Completo com Fotos
+# 🚀 Baileys Server v3.0.0 - Suporte Completo a Mídias
 
-## ✅ Correções v2.9.6
+## ✅ Novidades v3.0.0
 
-Esta versão adiciona **sincronização de fotos de perfil** e **conversas recentes**.
+Esta versão adiciona suporte completo a **mídias** (imagens, áudios, vídeos, documentos).
 
-### Mudanças v2.9.6:
-- ✅ **Busca foto de perfil** - profilePictureUrl para cada contato
-- ✅ **Conversas com fotos** - Envia foto junto com chat
-- ✅ **Histórico de mensagens** - messages.set + messaging-history.set
-- ✅ **Nome do contato** - pushName/notify corretos
-- ✅ **Endpoint /sync-profile-pics** - Força busca de fotos
+### Mudanças v3.0.0:
+- ✅ **Suporte a Mídias** - Imagens, vídeos, áudios, documentos e stickers
+- ✅ **Upload para Supabase Storage** - Mídias são salvas no bucket whatsapp-media
+- ✅ **CommonJS** - Melhor compatibilidade com Railway
+- ✅ **Baileys 6.7.9** - Versão estável com suporte a mídias
 
-### Histórico de versões:
-- v2.9.5: Sync de histórico completo
-- v2.9.4: Fix QR Lock bloqueando 515
-- v2.9.3: Reconexão imediata no 515
+### Tipos de Mídia Suportados:
+| Tipo | Extensão | Descrição |
+|------|----------|-----------|
+| image | jpg | Fotos e imagens |
+| video | mp4 | Vídeos |
+| ptt | ogg | Mensagens de voz |
+| audio | mp3 | Arquivos de áudio |
+| document | pdf, doc, etc | Documentos |
+| sticker | webp | Figurinhas |
 
 ## Deploy no Railway
 
@@ -26,6 +30,10 @@ Esta versão adiciona **sincronização de fotos de perfil** e **conversas recen
 2. Selecione seu repositório
 3. Em **Variables**, adicione:
    `SUPABASE_WEBHOOK_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook`
+   `SUPABASE_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co`
+   `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key` (pegar no Dashboard Supabase > Settings > API)
+
+**NÃO** defina PORT - Railway define automaticamente!
 
 ### 3. Pronto!
 Aguarde deploy completo (~3-4 minutos).
@@ -35,7 +43,7 @@ Aguarde deploy completo (~3-4 minutos).
 Após conectar, você verá:
 
 ```
-[CONNECTED] ✅ WhatsApp conectado!
-[CHATS] 📥 50 chats sincronizados!
-[PROFILE PIC] 📸 Buscando fotos de perfil...
+🚀 Baileys Server v3.0.0 running on port XXXX
+📡 Webhook URL: https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook
+📸 Media Support: Enabled
 ```
