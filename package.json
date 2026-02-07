@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "3.8.0",
-  "description": "Servidor Baileys estável - tempo real + contatos + mídia completa + endpoint corrigido",
+  "version": "4.0.0",
+  "description": "Servidor Baileys com reidratação de 1h - preserva nomes/fotos",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {

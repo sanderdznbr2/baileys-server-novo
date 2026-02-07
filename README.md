@@ -1,24 +1,25 @@
-# 🚀 Baileys Server v3.8.0 - Estável e Completo
+# 🚀 Baileys Server v4.0.0 - Reidratação de 1 Hora
 
-## ✨ Novidades v3.8.0
+## ✨ Novidades v4.0.0
 
-### 🔧 Correções
-- **CORREÇÃO**: Endpoint /api/message/send funcional
-- Logs detalhados no envio de mensagens
-- Validação melhorada de sessão
+### 🔄 Reidratação de 1 Hora
+- **Ao reconectar**: Busca mensagens da última 1 hora do banco
+- **Reenvia ao webhook**: Mensagens aparecem instantaneamente
+- **Preservação**: Nunca sobrescreve nomes/fotos existentes
 
-### 🔄 Estabilidade
-- **Heartbeat automático** - Ping a cada 25s mantém conexão
+### 🔐 Preservação de Contatos
+- **Nomes persistentes**: Contato salvo nunca perde o nome
+- **Fotos de perfil**: Mantém foto mesmo após reconexão
+- **Fallback**: Usa dados do banco quando WhatsApp não retorna
+
+### 🔧 Estabilidade
+- **Heartbeat 20s** - Conexão mais estável
 - **Reconexão inteligente** - Backoff exponencial
-- **Timeout configurável** - 90s para conexão inicial
-
-### 👥 Contatos
-- **Sincronização completa** - Todos os contatos ao conectar
-- **Fotos de perfil** - Busca automática com cache
+- **Proteção anti-flood** - Limita downloads de mídia
 
 ### 📸 Mídia
 - **Upload automático** - Supabase Storage
-- **Retry inteligente** - 5 tentativas
+- **Retry inteligente** - 3 tentativas com delay
 - **Todos os tipos** - Imagens, vídeos, áudios, documentos
 
 ## Deploy no Railway
@@ -34,9 +35,19 @@
 ## Comportamento
 
 ### ✅ O que SERÁ sincronizado:
-- Todos os contatos ao conectar
-- Mensagens novas após conexão
-- Todas as mídias (imagens, áudios, vídeos)
+- Mensagens da última 1 hora (ao reconectar)
+- Todos os contatos com nomes/fotos preservados
+- Mensagens novas em tempo real
+- Todas as mídias
 
-### ❌ O que NÃO será sincronizado:
-- Histórico de conversas antigas
+### ❌ O que NÃO será perdido:
+- Nomes de contatos salvos
+- Fotos de perfil existentes
+- Histórico no banco de dados
+
+## Migração da v3.x
+
+1. Baixe o novo servidor v4.0.0
+2. No Railway: substitua arquivos
+3. NÃO delete a pasta sessions/ (mantém login)
+4. Reinicie o serviço
