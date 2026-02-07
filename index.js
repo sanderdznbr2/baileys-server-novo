@@ -9,7 +9,7 @@ console.log('[INIT] Node version:', process.version);
 console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(50));
 
-const VERSION = "v2.1.0";
+const VERSION = "v2.2.0";
 const app = express();
 
 app.use(cors());
@@ -74,6 +74,7 @@ async function createSession(sessionId, instanceName, webhookSecret) {
   
   console.log(`[SESSION] Criando ${instanceName} (Baileys v${version.join('.')})`);
 
+  // v2.2.0: Adicionar flags para controle de reconexão
   const session = {
     sessionId,
     instanceName,
@@ -81,6 +82,9 @@ async function createSession(sessionId, instanceName, webhookSecret) {
     webhookSecret,
     qrCode: null,
     isConnected: false,
+    wasConnected: false,  // NOVO: rastreia se já conectou alguma vez
+    retryCount: 0,        // NOVO: conta tentativas de reconexão
+    createdAt: Date.now(), // NOVO: timestamp de criação
     phoneNumber: null,
     pushName: null
   };
@@ -89,7 +93,6 @@ async function createSession(sessionId, instanceName, webhookSecret) {
 
   const logger = pino({ level: 'silent' });
   
-  // CORREÇÃO: Usar makeWASocket diretamente (não é .default)
   const socket = makeWASocket({
     version,
     logger,
@@ -120,6 +123,8 @@ async function createSession(sessionId, instanceName, webhookSecret) {
 
     if (connection === 'open') {
       session.isConnected = true;
+      session.wasConnected = true;  // v2.2.0: Marca que já conectou
+      session.retryCount = 0;       // v2.2.0: Reset contador
       session.qrCode = null;
       const user = socket.user;
       if (user) {
@@ -138,19 +143,46 @@ async function createSession(sessionId, instanceName, webhookSecret) {
     if (connection === 'close') {
       session.isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
-      console.log(`[DISCONNECTED] ${instanceName} - Code: ${statusCode}, Reconnect: ${shouldReconnect}`);
+      
+      // v2.2.0: LÓGICA CORRIGIDA - Só reconectar se já tinha conectado antes
+      const shouldReconnect = 
+        session.wasConnected && 
+        statusCode !== DisconnectReason?.loggedOut &&
+        session.retryCount < 5;
+      
+      console.log(`[DISCONNECTED] ${instanceName} - Code: ${statusCode}, wasConnected: ${session.wasConnected}, retryCount: ${session.retryCount}, shouldReconnect: ${shouldReconnect}`);
+      
       await sendWebhook({
         event: 'connection.update',
         sessionId,
         instanceName,
         data: { connection: 'close', isConnected: false, statusCode }
       });
+      
       if (shouldReconnect) {
+        // v2.2.0: Só reconectar se já tinha conectado antes
+        session.retryCount++;
+        console.log(`[RECONNECT] Tentando reconectar ${instanceName} em 3s... (tentativa ${session.retryCount}/5)`);
+        setTimeout(async () => {
+          try {
+            sessions.delete(sessionId);
+            await createSession(sessionId, instanceName, webhookSecret);
+          } catch (err) {
+            console.error(`[RECONNECT] Erro ao reconectar ${instanceName}:`, err.message);
+          }
+        }, 3000);
+      } else if (statusCode === DisconnectReason?.loggedOut) {
+        // Logout explícito - remover sessão
+        console.log(`[LOGOUT] ${instanceName} fez logout, removendo sessão`);
         sessions.delete(sessionId);
-        setTimeout(() => createSession(sessionId, instanceName, webhookSecret), 5000);
-      } else {
-        sessions.delete(sessionId);
+        try {
+          const sessionPath = path.join(SESSIONS_DIR, sessionId);
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+        } catch (e) {}
+      } else if (!session.wasConnected) {
+        // v2.2.0: Nunca conectou - MANTER sessão ativa esperando QR ser escaneado
+        console.log(`[WAITING] ${instanceName} aguardando QR ser escaneado (não deletar sessão)`);
+        // NÃO deletar a sessão! Manter ativa para que o QR possa ser escaneado
       }
     }
   });
@@ -185,7 +217,7 @@ async function createSession(sessionId, instanceName, webhookSecret) {
 
 // ============ ROTAS ============
 
-// Health check - FUNCIONA MESMO SEM BAILEYS
+// Health check
 app.get('/api/health', (req, res) => {
   console.log(`[${VERSION}] Health check`);
   res.json({ 
@@ -231,7 +263,10 @@ app.get('/api/instance/:sessionId/status', (req, res) => {
     status: session.isConnected ? 'connected' : (session.qrCode ? 'waiting_qr' : 'connecting'),
     isConnected: session.isConnected,
     phoneNumber: session.phoneNumber,
-    pushName: session.pushName
+    pushName: session.pushName,
+    wasConnected: session.wasConnected,
+    retryCount: session.retryCount,
+    sessionAge: Date.now() - session.createdAt
   });
 });
 
@@ -280,33 +315,27 @@ app.post('/api/message/send-text', async (req, res) => {
 // ============ INICIAR SERVIDOR ============
 const PORT = process.env.PORT || 3333;
 
-// Iniciar Express PRIMEIRO (antes do Baileys)
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(50));
   console.log(`🚀 [${VERSION}] Servidor HTTP rodando na porta ${PORT}`);
   console.log(`📡 Webhook URL: ${WEBHOOK_URL || 'Não configurada'}`);
   console.log('='.repeat(50));
   
-  // Carregar Baileys em background (não bloqueia o servidor)
   loadBaileys();
 });
 
 async function loadBaileys() {
   console.log('[BAILEYS] Carregando módulos...');
   try {
-    // Carregar dependências síncronas primeiro
     QRCode = require('qrcode');
     console.log('[BAILEYS] qrcode carregado ✓');
     
     pino = require('pino');
     console.log('[BAILEYS] pino carregado ✓');
     
-    // Import dinâmico do Baileys (ESM)
     const baileys = await import('@whiskeysockets/baileys');
     console.log('[BAILEYS] Módulo importado, extraindo funções...');
     
-    // CORREÇÃO: Baileys exporta makeWASocket como default.default ou diretamente
-    // Verificar a estrutura do módulo
     if (typeof baileys.default === 'function') {
       makeWASocket = baileys.default;
     } else if (baileys.default && typeof baileys.default.default === 'function') {
@@ -314,13 +343,11 @@ async function loadBaileys() {
     } else if (typeof baileys.makeWASocket === 'function') {
       makeWASocket = baileys.makeWASocket;
     } else {
-      // Listar o que está disponível para debug
       console.log('[BAILEYS] Estrutura do módulo:', Object.keys(baileys));
       console.log('[BAILEYS] Estrutura de baileys.default:', baileys.default ? Object.keys(baileys.default) : 'undefined');
       throw new Error('Não foi possível encontrar makeWASocket no módulo');
     }
     
-    // Extrair outras funções necessárias
     useMultiFileAuthState = baileys.useMultiFileAuthState || baileys.default?.useMultiFileAuthState;
     DisconnectReason = baileys.DisconnectReason || baileys.default?.DisconnectReason;
     makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore || baileys.default?.makeCacheableSignalKeyStore;
