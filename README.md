@@ -1,6 +1,13 @@
-# 🚀 Baileys Server para WhatsApp CRM
+# 🚀 Baileys Server v2.5.0 para WhatsApp CRM
 
-## Deploy no Railway (SUPER SIMPLES!)
+## Novidades v2.5.0
+- ✅ Listener direto para evento 'qr' (mais confiável)
+- ✅ Logging detalhado por etapas (debug fácil)
+- ✅ Error handling robusto no auth state
+- ✅ Retry automático em desconexões rápidas
+- ✅ Até 10 tentativas de gerar QR Code
+
+## Deploy no Railway
 
 ### 1. Suba para o GitHub
 - Crie um repositório no GitHub
@@ -13,14 +20,20 @@
    `SUPABASE_WEBHOOK_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook`
 
 ### 3. Pronto!
-O servidor vai iniciar automaticamente. Teste:
-`https://SEU-DOMINIO.railway.app/api/health`
+O servidor vai iniciar automaticamente.
 
-## Estrutura
+## Verificação de Logs
+
+Nos logs do Railway, você deve ver:
 ```
-baileys-server/
-├── index.js       ← Servidor completo (único arquivo!)
-├── package.json
-├── .gitignore
-└── README.md
+[SOCKET] Etapa 1: Preparando diretório de auth...
+[SOCKET] Etapa 2: Carregando auth state...
+[SOCKET] Etapa 3: Buscando versão do Baileys...
+[SOCKET] Etapa 4: Configurando socket...
+[SOCKET] Etapa 5: Criando socket Baileys...
+[SOCKET] Etapa 6: Registrando event listeners...
+[QR-EVENT] ⚡⚡⚡ EVENTO QR RECEBIDO DIRETAMENTE! ⚡⚡⚡
 ```
+
+Se parar antes da "Etapa 5", o problema é no auth state.
+Se parar após "Etapa 5", o problema é na conexão com WhatsApp.
