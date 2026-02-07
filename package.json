@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "4.1.0",
-  "description": "Servidor Baileys com metadados completos - foto de grupos, descrição, participantes, status",
+  "version": "4.2.0",
+  "description": "Servidor Baileys estável - QR Code, mensagens e metadados (sem SDK Supabase)",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {

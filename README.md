@@ -1,31 +1,13 @@
-# 🚀 Baileys Server v4.1.0 - Metadados Completos
+# 🚀 Baileys Server v4.2.0 - Estável
 
-## ✨ Novidades v4.1.0
+## ✨ Correções v4.2.0
 
-### 📸 Foto de Grupos
-- Busca `profilePictureUrl()` para grupos (`@g.us`)
-- Exibe foto de perfil do grupo no CRM
-
-### 📝 Descrição do Grupo
-- Busca `groupMetadata().desc`
-- Mostra descrição/bio do grupo
-
-### 👥 Lista de Participantes
-- Busca `groupMetadata().participants`
-- Retorna lista com roles: `{ jid, isAdmin, isSuperAdmin }`
-- Permite identificar admins do grupo
-
-### 💬 Status dos Contatos
-- Busca `fetchStatus(jid)` para contatos individuais
-- Mostra o status/bio de cada contato
-
-### 🔄 Reidratação de 1 Hora
-- Ao reconectar, busca mensagens da última 1h
-- Sincroniza automaticamente com o webhook
-
-### 🔐 Preservação de Dados
-- Nomes e fotos nunca são sobrescritos por valores vazios
-- Banco de dados é a fonte da verdade
+- ✅ **Removida dependência @supabase/supabase-js** - usa fetch nativo
+- ✅ QR Code gerado corretamente
+- ✅ Metadados de grupos (foto, descrição, participantes)
+- ✅ Status/bio de contatos individuais
+- ✅ Sincronização de contatos via contacts.set
+- ✅ Reconexão automática com backoff exponencial
 
 ## Deploy no Railway
 
@@ -37,23 +19,12 @@
 
 **NÃO** defina PORT - Railway define automaticamente!
 
-## Comportamento
+## Dependências
 
-### ✅ O que será buscado:
-- Foto de perfil (contatos E grupos)
-- Descrição do grupo
-- Lista de participantes com roles
-- Status/bio dos contatos
-- Mensagens da última 1h (ao reconectar)
+- @whiskeysockets/baileys: ^6.7.17
+- express: ^4.21.2
+- cors: ^2.8.5
+- pino: ^9.6.0
+- qrcode: ^1.5.4
 
-### ❌ O que NÃO será perdido:
-- Nomes de contatos salvos
-- Fotos de perfil existentes
-- Histórico no banco de dados
-
-## Migração da v4.0.0
-
-1. Baixe o novo servidor v4.1.0
-2. No Railway: substitua arquivos
-3. NÃO delete a pasta sessions/ (mantém login)
-4. Reinicie o serviço
+**NÃO** inclui @supabase/supabase-js - todas as chamadas são via fetch.
