@@ -9,15 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.9.1 iniciando...');
+console.log('[INIT] 🚀 Baileys Server v2.9.2 iniciando...');
 console.log('[INIT] 📦 Baileys 7.0.0-rc.9 (ESM)');
-console.log('[INIT] 🖥️ Browser: Browsers.macOS("Desktop")');
+console.log('[INIT] 🔧 Fix: QR regenerando rápido');
 console.log('[INIT] Node version:', process.version);
-console.log('[INIT] Platform:', process.platform);
-console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(60));
 
-const VERSION = "v2.9.0";
+const VERSION = "v2.9.2";
 const app = express();
 
 app.use(cors());
@@ -27,9 +25,12 @@ app.use(express.json());
 const WEBHOOK_URL = process.env.SUPABASE_WEBHOOK_URL || '';
 const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
 const MAX_RETRIES = 3;
+const QR_LOCK_TIME_MS = 60000;  // 60s - tempo para escanear QR
+const RETRY_DELAY_MS = 15000;   // 15s entre retries
 
 console.log('[CONFIG] Webhook URL:', WEBHOOK_URL ? 'Configurada ✓' : 'NÃO configurada ⚠');
-console.log('[CONFIG] Sessions dir:', SESSIONS_DIR);
+console.log('[CONFIG] QR Lock Time:', QR_LOCK_TIME_MS / 1000, 's');
+console.log('[CONFIG] Retry Delay:', RETRY_DELAY_MS / 1000, 's');
 
 try {
   if (!fs.existsSync(SESSIONS_DIR)) {
@@ -70,10 +71,22 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ============ CRIAR SOCKET (v2.9.0 - ESM + Browsers.macOS) ============
+// ============ CRIAR SOCKET (v2.9.2 - Fix QR rápido) ============
 async function createSocketForSession(session) {
   const { sessionId, instanceName } = session;
   const sessionPath = path.join(SESSIONS_DIR, sessionId);
+  
+  // ===== CHECK QR LOCK =====
+  // Se QR foi gerado recentemente, NÃO reconectar
+  if (session.qrGeneratedAt) {
+    const timeSinceQR = Date.now() - session.qrGeneratedAt;
+    if (timeSinceQR < QR_LOCK_TIME_MS) {
+      const remaining = Math.ceil((QR_LOCK_TIME_MS - timeSinceQR) / 1000);
+      console.log(`[QR LOCK] ⏳ QR gerado há ${Math.ceil(timeSinceQR/1000)}s, aguarde mais ${remaining}s`);
+      console.log('[QR LOCK] Não reconectando para dar tempo de escanear');
+      return session;
+    }
+  }
   
   console.log('');
   console.log('[SOCKET] ========================================');
@@ -81,7 +94,16 @@ async function createSocketForSession(session) {
   console.log(`[SOCKET] Tentativa: ${session.retryCount + 1}/${MAX_RETRIES}`);
   console.log('[SOCKET] ========================================');
   
-  // Limpar auth em retry
+  // Fechar socket anterior se existir
+  if (session.socket) {
+    try {
+      session.socket.end();
+      console.log('[SOCKET] ✓ Socket anterior fechado');
+    } catch (e) {}
+    session.socket = null;
+  }
+  
+  // Limpar auth em retry (mas não na primeira vez)
   if (session.retryCount > 0) {
     try {
       if (fs.existsSync(sessionPath)) {
@@ -105,8 +127,8 @@ async function createSocketForSession(session) {
     throw e;
   }
   
-  // Carregar auth state - Baileys 7.x usa apenas state direto
-  console.log('[SOCKET] Carregando auth state (Baileys 7.x)...');
+  // Carregar auth state
+  console.log('[SOCKET] Carregando auth state...');
   let state, saveCreds;
   try {
     const authResult = await useMultiFileAuthState(sessionPath);
@@ -119,29 +141,33 @@ async function createSocketForSession(session) {
   }
   
   // Aguardar antes de criar socket
-  console.log('[SOCKET] Aguardando 1s antes de criar socket...');
   await sleep(1000);
   
-  // ========== CRIAR SOCKET - CONFIGURAÇÃO OFICIAL BAILEYS 7.x ==========
-  console.log('[SOCKET] Criando socket com Browsers.macOS("Desktop")...');
+  // ========== CRIAR SOCKET - v2.9.2 Config ==========
+  console.log('[SOCKET] Criando socket com config v2.9.2...');
   
   const logger = pino({ level: 'silent' });
   
-  // CONFIGURAÇÃO MÍNIMA OFICIAL - Baileys 7.x
+  // CONFIGURAÇÃO v2.9.2 - Com delays para evitar QR rápido
   const sock = makeWASocket({
-    auth: state,  // Direto, sem makeCacheableSignalKeyStore
-    browser: Browsers.macOS("Desktop"),  // Browser string OFICIAL
-    printQRInTerminal: true,
+    auth: state,
+    browser: Browsers.macOS("Desktop"),
     logger: logger,
+    // Configurações para evitar QR regenerando rápido
     syncFullHistory: false,
-    markOnlineOnConnect: true,
+    markOnlineOnConnect: false,
     generateHighQualityLinkPreview: false,
+    retryRequestDelayMs: 2000,       // 2s entre requests
+    connectTimeoutMs: 60000,          // 60s timeout de conexão
+    defaultQueryTimeoutMs: 60000,     // 60s timeout de queries
+    keepAliveIntervalMs: 30000,       // 30s keepalive
     getMessage: async () => undefined
+    // NÃO usar printQRInTerminal (deprecated em 7.x)
   });
   
   session.socket = sock;
   session.socketCreatedAt = Date.now();
-  console.log('[SOCKET] ✓ Socket criado com Browsers.macOS("Desktop")!');
+  console.log('[SOCKET] ✓ Socket criado!');
   
   // ========== REGISTRAR LISTENERS ==========
   console.log('[SOCKET] Registrando listeners...');
@@ -156,7 +182,8 @@ async function createSocketForSession(session) {
     
     console.log('[CONNECTION] Update:', JSON.stringify({
       hasQr: !!qr,
-      connection: connection || null
+      connection: connection || null,
+      qrLocked: session.qrGeneratedAt ? (Date.now() - session.qrGeneratedAt < QR_LOCK_TIME_MS) : false
     }));
     
     // ===== QR CODE =====
@@ -167,6 +194,7 @@ async function createSocketForSession(session) {
         session.qrGeneratedAt = Date.now();
         session.status = 'waiting_qr';
         console.log('[QR] ✅ QR Code convertido para DataURL');
+        console.log('[QR] 🔒 QR Lock ativo por', QR_LOCK_TIME_MS / 1000, 's');
         
         await sendWebhook({
           event: 'qr.update',
@@ -185,6 +213,7 @@ async function createSocketForSession(session) {
       session.wasConnected = true;
       session.retryCount = 0;
       session.qrCode = null;
+      session.qrGeneratedAt = null;  // Limpar lock
       session.status = 'connected';
       
       const user = sock.user;
@@ -217,13 +246,13 @@ async function createSocketForSession(session) {
     if (connection === 'close') {
       session.isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const errorMessage = lastDisconnect?.error?.message || '';
       
       console.log('');
       console.log('[DISCONNECTED] ========================================');
       console.log(`[DISCONNECTED] Instância: ${instanceName}`);
       console.log(`[DISCONNECTED] Código: ${statusCode}`);
-      console.log(`[DISCONNECTED] wasConnected: ${session.wasConnected}`);
-      console.log(`[DISCONNECTED] hadQR: ${!!session.qrCode}`);
+      console.log(`[DISCONNECTED] Erro: ${errorMessage}`);
       console.log('[DISCONNECTED] ========================================');
       
       await sendWebhook({
@@ -232,6 +261,17 @@ async function createSocketForSession(session) {
         instanceName,
         data: { connection: 'close', isConnected: false, statusCode }
       });
+      
+      // ===== CHECK QR LOCK ANTES DE RECONECTAR =====
+      if (session.qrGeneratedAt) {
+        const timeSinceQR = Date.now() - session.qrGeneratedAt;
+        if (timeSinceQR < QR_LOCK_TIME_MS) {
+          const remaining = Math.ceil((QR_LOCK_TIME_MS - timeSinceQR) / 1000);
+          console.log(`[QR LOCK] ⏳ QR ativo, NÃO reconectando (aguarde ${remaining}s)`);
+          console.log('[QR LOCK] Usuário pode estar escaneando o QR');
+          return;  // NÃO reconectar
+        }
+      }
       
       // Logout = não reconectar
       if (statusCode === DisconnectReason?.loggedOut) {
@@ -244,55 +284,54 @@ async function createSocketForSession(session) {
         return;
       }
       
-      // Erro 405 = Method Not Allowed - problema de protocolo
-      if (statusCode === 405) {
-        console.log('[405] Method Not Allowed - problema de protocolo');
-        console.log('[405] Usando Baileys 7.x com Browsers.macOS("Desktop")');
-        session.retryCount++;
-        if (session.retryCount < MAX_RETRIES) {
-          session.status = 'reconnecting';
-          console.log(`[405] Tentando reconectar em 10s (tentativa ${session.retryCount})...`);
-          setTimeout(async () => {
-            try {
-              await createSocketForSession(session);
-            } catch (err) {
-              console.error('[405] Erro ao reconectar:', err.message);
-              session.status = 'failed';
-            }
-          }, 10000);
-        } else {
-          console.log('[405] Esgotou tentativas - pode ser bloqueio de IP');
-          session.status = 'failed';
-        }
-        return;
-      }
-      
-      // Erro 515 = Restart Required - reconectar com delay maior
+      // Erro 515 = Stream error - pode ser QR expirado
       if (statusCode === 515) {
-        console.log('[515] Restart Required - reconectando em 5s...');
+        console.log('[515] Stream error - QR pode ter expirado');
+        // Gerar novo QR sem incrementar retry
+        session.qrCode = null;
+        session.qrGeneratedAt = null;
+        session.status = 'reconnecting';
+        console.log(`[515] Reconectando em ${RETRY_DELAY_MS/1000}s...`);
+        setTimeout(async () => {
+          try {
+            await createSocketForSession(session);
+          } catch (err) {
+            console.error('[515] Erro ao reconectar:', err.message);
+          }
+        }, RETRY_DELAY_MS);
+        return;
+      }
+      
+      // Erro 405/408 = Timeout/Method Not Allowed
+      if (statusCode === 405 || statusCode === 408) {
+        console.log(`[${statusCode}] Erro de protocolo`);
         session.retryCount++;
         if (session.retryCount < MAX_RETRIES) {
+          session.qrCode = null;
+          session.qrGeneratedAt = null;
           session.status = 'reconnecting';
+          console.log(`[${statusCode}] Reconectando em ${RETRY_DELAY_MS/1000}s (tentativa ${session.retryCount})`);
           setTimeout(async () => {
             try {
               await createSocketForSession(session);
             } catch (err) {
-              console.error('[515] Erro ao reconectar:', err.message);
+              console.error(`[${statusCode}] Erro ao reconectar:`, err.message);
               session.status = 'failed';
             }
-          }, 5000);
+          }, RETRY_DELAY_MS);
         } else {
+          console.log(`[${statusCode}] Esgotou tentativas`);
           session.status = 'failed';
         }
         return;
       }
       
-      // Tentar reconectar para outros erros
+      // Outros erros - reconectar com delay maior
       if (session.retryCount < MAX_RETRIES) {
         session.retryCount++;
         session.status = 'reconnecting';
         
-        console.log(`[RETRY] Tentativa ${session.retryCount}/${MAX_RETRIES} em 5s...`);
+        console.log(`[RETRY] Tentativa ${session.retryCount}/${MAX_RETRIES} em ${RETRY_DELAY_MS/1000}s...`);
         
         setTimeout(async () => {
           try {
@@ -301,7 +340,7 @@ async function createSocketForSession(session) {
             console.error('[RETRY] Erro:', err.message);
             session.status = 'failed';
           }
-        }, 5000);
+        }, RETRY_DELAY_MS);
       } else {
         console.log('[FAILED] Esgotou tentativas');
         session.status = 'failed';
@@ -388,6 +427,8 @@ app.get('/api/health', (req, res) => {
     version: VERSION,
     baileys: '7.0.0-rc.9',
     browser: 'Browsers.macOS("Desktop")',
+    qrLockTime: QR_LOCK_TIME_MS / 1000 + 's',
+    retryDelay: RETRY_DELAY_MS / 1000 + 's',
     sessions: sessions.size,
     baileysLoaded,
     timestamp: new Date().toISOString()
@@ -429,12 +470,22 @@ app.get('/api/instance/:sessionId/qr', (req, res) => {
     return res.status(404).json({ error: 'Sessão não encontrada' });
   }
   
+  // Info sobre QR Lock
+  let qrLockRemaining = null;
+  if (session.qrGeneratedAt) {
+    const elapsed = Date.now() - session.qrGeneratedAt;
+    if (elapsed < QR_LOCK_TIME_MS) {
+      qrLockRemaining = Math.ceil((QR_LOCK_TIME_MS - elapsed) / 1000);
+    }
+  }
+  
   res.json({
     qrCode: session.qrCode,
     isConnected: session.isConnected,
     phoneNumber: session.phoneNumber,
     pushName: session.pushName,
-    status: session.status
+    status: session.status,
+    qrLockRemaining
   });
 });
 
@@ -468,10 +519,10 @@ app.post('/api/instance/:sessionId/regenerate-qr', async (req, res) => {
     try { session.socket.end(); } catch (e) {}
   }
   
-  // Resetar estado
+  // Resetar estado INCLUINDO qrGeneratedAt para permitir reconexão
   session.socket = null;
   session.qrCode = null;
-  session.qrGeneratedAt = null;
+  session.qrGeneratedAt = null;  // IMPORTANTE: limpar lock
   session.retryCount = 0;
   session.status = 'initializing';
   session.wasConnected = false;
@@ -561,7 +612,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 [${VERSION}] Servidor HTTP na porta ${PORT}`);
   console.log(`📡 Webhook: ${WEBHOOK_URL || 'Não configurada'}`);
   console.log(`📦 Baileys: 7.0.0-rc.9 (ESM)`);
-  console.log(`🖥️ Browser: Browsers.macOS("Desktop")`);
+  console.log(`🔒 QR Lock: ${QR_LOCK_TIME_MS/1000}s`);
+  console.log(`⏱️ Retry Delay: ${RETRY_DELAY_MS/1000}s`);
   console.log('='.repeat(60));
   console.log('');
   loadBaileys();
@@ -611,7 +663,7 @@ async function loadBaileys() {
     console.log('');
     console.log('[BAILEYS] ========================================');
     console.log('[BAILEYS] ✅ BAILEYS 7.0.0-rc.9 PRONTO!');
-    console.log('[BAILEYS] Browser: Browsers.macOS("Desktop")');
+    console.log('[BAILEYS] 🔒 QR Lock:', QR_LOCK_TIME_MS/1000, 's');
     console.log('[BAILEYS] ========================================');
     console.log('');
   } catch (err) {

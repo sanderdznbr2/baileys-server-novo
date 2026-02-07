@@ -1,22 +1,25 @@
-# 🚀 Baileys Server v2.9.1 - ESM + Baileys 7.x + Node 20
+# 🚀 Baileys Server v2.9.2 - Fix QR Rápido
 
-## ✅ Correções v2.9.1
+## ✅ Correções v2.9.2
 
-Esta versão resolve o **Erro 405** usando Baileys 7.x com configuração oficial.
+Esta versão corrige o problema do **QR Code regenerando muito rápido**.
 
-### Mudanças Principais:
+### Mudanças v2.9.2:
+- ✅ **QR Lock** - Impede regeneração enquanto usuário escaneia (60s)
+- ✅ **Retry delay aumentado** - 15s entre tentativas
+- ✅ **Sem printQRInTerminal** - Remove warning deprecated
+- ✅ **retryRequestDelayMs** - Delay de 2s entre requests
+- ✅ **connectTimeoutMs** - Timeout de 60s para conexão
+
+### Versões Anteriores:
 - ✅ **Node.js 20** (obrigatório para Baileys 7.x)
 - ✅ **Baileys 7.0.0-rc.9** (versão mais recente)
-- ✅ **ESM** (type: module) - obrigatório para Baileys 7.x
 - ✅ **Browsers.macOS("Desktop")** - browser string oficial
-- ✅ **nixpacks.toml** - força Railway a usar Node 20
-- ✅ **.node-version** - especifica Node 20
 
 ## Deploy no Railway
 
 ### 1. Suba para o GitHub
-- Crie um repositório no GitHub
-- Faça upload de **TODOS** estes arquivos (incluindo .node-version e nixpacks.toml)
+- Substitua **TODOS** os arquivos
 
 ### 2. No Railway
 1. New Project → Deploy from GitHub
@@ -25,24 +28,16 @@ Esta versão resolve o **Erro 405** usando Baileys 7.x com configuração oficia
    `SUPABASE_WEBHOOK_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook`
 
 ### 3. Pronto!
-O Railway vai usar Node.js 20 automaticamente (3-4 minutos).
+Aguarde deploy completo (~3-4 minutos).
 
 ## Verificação de Logs
 
 Nos logs do Railway, você deve ver:
 
 ```
-[INIT] Baileys Server v2.9.1 iniciando...
-[INIT] Baileys 7.0.0-rc.9 (ESM)
-[INIT] Node version: v20.x.x  <-- IMPORTANTE!
-[BAILEYS] ✅ Carregado com sucesso!
-[QR] ✅ QR Code recebido!
+[INIT] Baileys Server v2.9.2 iniciando...
+[QR] 🎉 QR Code recebido!
+[QR] 🔒 QR Lock ativo por 60s
 ```
 
-## Arquivos Importantes
-
-- **nixpacks.toml** - Configura Railway para usar Node 20
-- **.node-version** - Especifica a versão do Node
-- **package.json** - engines: ">=20"
-
-Se o deploy falhar com erro de Node 18, verifique se o nixpacks.toml foi incluído.
+Se o QR regenerar antes de 60s, há outro problema.
