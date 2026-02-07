@@ -9,13 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.9.4 iniciando...');
+console.log('[INIT] 🚀 Baileys Server v2.9.5 iniciando...');
 console.log('[INIT] 📦 Baileys 7.0.0-rc.9 (ESM)');
-console.log('[INIT] 🔧 Fix: QR Lock bloqueando reconexão 515');
+console.log('[INIT] 🔧 Sincronização de histórico completa');
 console.log('[INIT] Node version:', process.version);
 console.log('='.repeat(60));
 
-const VERSION = "v2.9.4";
+const VERSION = "v2.9.5";
 const app = express();
 
 app.use(cors());
@@ -148,21 +148,20 @@ async function createSocketForSession(session) {
   
   const logger = pino({ level: 'silent' });
   
-  // CONFIGURAÇÃO v2.9.2 - Com delays para evitar QR rápido
+  // CONFIGURAÇÃO v2.9.4 - Com sincronização de histórico
   const sock = makeWASocket({
     auth: state,
     browser: Browsers.macOS("Desktop"),
     logger: logger,
-    // Configurações para evitar QR regenerando rápido
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
+    // Habilitar sincronização de histórico
+    syncFullHistory: true,           // IMPORTANTE: Sincronizar histórico completo
+    markOnlineOnConnect: true,       // Marcar online para receber histórico
     generateHighQualityLinkPreview: false,
-    retryRequestDelayMs: 2000,       // 2s entre requests
-    connectTimeoutMs: 60000,          // 60s timeout de conexão
-    defaultQueryTimeoutMs: 60000,     // 60s timeout de queries
-    keepAliveIntervalMs: 30000,       // 30s keepalive
+    retryRequestDelayMs: 2000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 30000,
     getMessage: async () => undefined
-    // NÃO usar printQRInTerminal (deprecated em 7.x)
   });
   
   session.socket = sock;
@@ -372,20 +371,25 @@ async function createSocketForSession(session) {
   });
   console.log('[SOCKET] ✓ connection.update registrado');
   
-  // MENSAGENS
+  // MENSAGENS (novas e histórico)
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    // Processar tanto 'notify' (novas) quanto 'append' (histórico)
+    console.log(`[MESSAGES] Tipo: ${type}, Quantidade: ${messages.length}`);
     
     for (const msg of messages) {
       if (msg.key.remoteJid === 'status@broadcast') continue;
       
-      console.log(`[MESSAGE] De: ${msg.key.remoteJid}`);
+      // Ignorar mensagens de protocolo (sync notifications)
+      if (msg.message?.protocolMessage) continue;
+      
+      console.log(`[MESSAGE] De: ${msg.key.remoteJid} | FromMe: ${msg.key.fromMe}`);
       
       await sendWebhook({
         event: 'messages.upsert',
         sessionId,
         instanceName,
         data: {
+          type,
           messages: [{
             key: msg.key,
             message: msg.message,
@@ -397,6 +401,58 @@ async function createSocketForSession(session) {
     }
   });
   console.log('[SOCKET] ✓ messages.upsert registrado');
+  
+  // CHATS SINCRONIZADOS
+  sock.ev.on('chats.upsert', async (chats) => {
+    console.log(`[CHATS] 📥 ${chats.length} chats sincronizados!`);
+    
+    await sendWebhook({
+      event: 'chats.upsert',
+      sessionId,
+      instanceName,
+      data: { chats }
+    });
+  });
+  console.log('[SOCKET] ✓ chats.upsert registrado');
+  
+  // CHATS SET (histórico completo)
+  sock.ev.on('chats.set', async ({ chats, isLatest }) => {
+    console.log(`[CHATS SET] 📥 ${chats.length} chats (isLatest: ${isLatest})`);
+    
+    await sendWebhook({
+      event: 'chats.set',
+      sessionId,
+      instanceName,
+      data: { chats, isLatest }
+    });
+  });
+  console.log('[SOCKET] ✓ chats.set registrado');
+  
+  // CONTATOS SINCRONIZADOS
+  sock.ev.on('contacts.upsert', async (contacts) => {
+    console.log(`[CONTACTS] 📥 ${contacts.length} contatos sincronizados!`);
+    
+    await sendWebhook({
+      event: 'contacts.upsert',
+      sessionId,
+      instanceName,
+      data: { contacts }
+    });
+  });
+  console.log('[SOCKET] ✓ contacts.upsert registrado');
+  
+  // CONTATOS SET (lista completa)
+  sock.ev.on('contacts.set', async ({ contacts }) => {
+    console.log(`[CONTACTS SET] 📥 ${contacts.length} contatos`);
+    
+    await sendWebhook({
+      event: 'contacts.set',
+      sessionId,
+      instanceName,
+      data: { contacts }
+    });
+  });
+  console.log('[SOCKET] ✓ contacts.set registrado');
   
   console.log('[SOCKET] ========================================');
   console.log('[SOCKET] ✅ Socket pronto, aguardando QR...');
