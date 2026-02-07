@@ -9,13 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.9.2 iniciando...');
+console.log('[INIT] 🚀 Baileys Server v2.9.3 iniciando...');
 console.log('[INIT] 📦 Baileys 7.0.0-rc.9 (ESM)');
-console.log('[INIT] 🔧 Fix: QR regenerando rápido');
+console.log('[INIT] 🔧 Fix: Erro 515 após QR scan');
 console.log('[INIT] Node version:', process.version);
 console.log('='.repeat(60));
 
-const VERSION = "v2.9.2";
+const VERSION = "v2.9.3";
 const app = express();
 
 app.use(cors());
@@ -284,21 +284,37 @@ async function createSocketForSession(session) {
         return;
       }
       
-      // Erro 515 = Stream error - pode ser QR expirado
+      // ===== ERRO 515 - COMPORTAMENTO ESPERADO APÓS QR SCAN =====
+      // WhatsApp envia 515 para forçar reconexão após pareamento bem-sucedido
+      // A reconexão deve ser IMEDIATA (1s) pois as credenciais já foram salvas
       if (statusCode === 515) {
-        console.log('[515] Stream error - QR pode ter expirado');
-        // Gerar novo QR sem incrementar retry
-        session.qrCode = null;
-        session.qrGeneratedAt = null;
-        session.status = 'reconnecting';
-        console.log(`[515] Reconectando em ${RETRY_DELAY_MS/1000}s...`);
+        console.log('');
+        console.log('[515] ⚡ Stream Error - Reconexão IMEDIATA');
+        console.log('[515] Isso é NORMAL após escanear o QR');
+        console.log('[515] Credenciais foram salvas, reconectando...');
+        console.log('');
+        
+        // IMPORTANTE: NÃO limpar auth, NÃO incrementar retry
+        // As credenciais já foram salvas pelo pareamento
+        session.status = 'reconnecting_after_pair';
+        
+        // Fechar socket atual
+        if (session.socket) {
+          try { session.socket.end(); } catch (e) {}
+          session.socket = null;
+        }
+        
+        // Reconectar IMEDIATAMENTE (1s apenas para limpar socket)
         setTimeout(async () => {
           try {
+            console.log('[515] Iniciando reconexão...');
             await createSocketForSession(session);
           } catch (err) {
-            console.error('[515] Erro ao reconectar:', err.message);
+            console.error('[515] Erro na reconexão:', err.message);
+            session.status = 'failed';
           }
-        }, RETRY_DELAY_MS);
+        }, 1000);  // 1s - reconexão imediata!
+        
         return;
       }
       
