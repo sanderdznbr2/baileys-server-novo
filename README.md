@@ -1,14 +1,13 @@
-# 🚀 Baileys Server v3.0.0 - Suporte Completo a Mídias
+# 🚀 Baileys Server v3.1.0 - Suporte a Mídias e Grupos
 
-## ✅ Novidades v3.0.0
+## ✅ Novidades v3.1.0
 
-Esta versão adiciona suporte completo a **mídias** (imagens, áudios, vídeos, documentos).
-
-### Mudanças v3.0.0:
+### Mudanças v3.1.0:
+- ✅ **Suporte Completo a Grupos** - Identifica quem enviou cada mensagem
 - ✅ **Suporte a Mídias** - Imagens, vídeos, áudios, documentos e stickers
 - ✅ **Upload para Supabase Storage** - Mídias são salvas no bucket whatsapp-media
-- ✅ **CommonJS** - Melhor compatibilidade com Railway
-- ✅ **Baileys 6.7.9** - Versão estável com suporte a mídias
+- ✅ **Retry em Downloads** - 3 tentativas para download de mídias
+- ✅ **Melhor Identificação de Contatos** - Nome e telefone do remetente em grupos
 
 ### Tipos de Mídia Suportados:
 | Tipo | Extensão | Descrição |
@@ -43,7 +42,54 @@ Aguarde deploy completo (~3-4 minutos).
 Após conectar, você verá:
 
 ```
-🚀 Baileys Server v3.0.0 running on port XXXX
-📡 Webhook URL: https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook
-📸 Media Support: Enabled
+============================================
+🚀 Baileys Server v3.1.0 running on port XXXX
+============================================
+📡 Webhook URL: https://...
+📸 Media Support: ✅ Enabled
+============================================
+```
+
+## Endpoints da API
+
+### Health Check
+`GET /api/health`
+
+### Criar Instância
+`POST /api/instance/create`
+```json
+{
+  "sessionId": "uuid",
+  "instanceName": "minha-instancia",
+  "webhookSecret": "opcional"
+}
+```
+
+### Obter QR Code
+`GET /api/instance/:sessionId/qr`
+
+### Status da Conexão
+`GET /api/instance/:sessionId/status`
+
+### Enviar Mensagem de Texto
+`POST /api/message/send-text`
+```json
+{
+  "sessionId": "uuid",
+  "phone": "5511999999999",
+  "message": "Olá!"
+}
+```
+
+### Enviar Mídia
+`POST /api/message/send-media`
+```json
+{
+  "sessionId": "uuid",
+  "phone": "5511999999999",
+  "mediaUrl": "https://...",
+  "mediaType": "image|video|audio|ptt|document",
+  "caption": "Legenda opcional",
+  "fileName": "documento.pdf"
+}
 ```

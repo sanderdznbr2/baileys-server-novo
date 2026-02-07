@@ -1,6 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "3.0.0",
+  "version": "3.1.0",
+  "description": "Servidor Baileys com suporte a mídia para WhatsApp CRM",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
@@ -11,7 +12,7 @@
     "@whiskeysockets/baileys": "^6.7.9",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "mime-types": "^1.0.0",
+    "mime-types": "^2.1.35",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4"
   },
