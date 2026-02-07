@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "3.7.0",
-  "description": "Servidor Baileys estável - tempo real + contatos + mídia completa",
+  "version": "3.8.0",
+  "description": "Servidor Baileys estável - tempo real + contatos + mídia completa + endpoint corrigido",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {

@@ -1,6 +1,11 @@
-# 🚀 Baileys Server v3.7.0 - Estável e Completo
+# 🚀 Baileys Server v3.8.0 - Estável e Completo
 
-## ✨ Novidades v3.7.0
+## ✨ Novidades v3.8.0
+
+### 🔧 Correções
+- **CORREÇÃO**: Endpoint /api/message/send funcional
+- Logs detalhados no envio de mensagens
+- Validação melhorada de sessão
 
 ### 🔄 Estabilidade
 - **Heartbeat automático** - Ping a cada 25s mantém conexão

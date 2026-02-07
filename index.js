@@ -1,8 +1,9 @@
 /**
  * ============================================
- * BAILEYS SERVER v3.7.0
+ * BAILEYS SERVER v3.8.0
  * ============================================
  * Servidor WhatsApp estável e completo
+ * - CORREÇÃO: Endpoint /api/message/send funcional
  * - Heartbeat automático (25s)
  * - Reconexão com backoff exponencial
  * - Sincronização completa de contatos
@@ -296,7 +297,7 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret, rec
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '3.7.0', features: { contactsSync: true, mediaUpload: !!supabase, heartbeat: true }, sessions: sessions.size, timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: '3.8.0', features: { contactsSync: true, mediaUpload: !!supabase, heartbeat: true }, sessions: sessions.size, timestamp: new Date().toISOString() });
 });
 
 app.post('/api/instance/create', async (req, res) => {
@@ -345,13 +346,17 @@ app.get('/api/contacts/:sessionId', (req, res) => {
 app.post('/api/message/send', async (req, res) => {
   try {
     const { sessionId, phone, message, isGroup } = req.body;
+    console.log(`📤 Send request: session=${sessionId}, phone=${phone}, isGroup=${isGroup}`);
     const session = sessions.get(sessionId);
-    if (!session?.socket?.isConnected) return res.status(400).json({ error: 'Session not connected' });
+    if (!session) { console.error(`❌ Session not found: ${sessionId}`); return res.status(400).json({ error: 'Session not found' }); }
+    if (!session.socket) { console.error(`❌ Socket not available`); return res.status(400).json({ error: 'Socket not available' }); }
+    if (!session.isConnected) { console.error(`❌ Session not connected`); return res.status(400).json({ error: 'Session not connected' }); }
     const jid = formatJidForSend(phone, isGroup);
-    console.log(`📤 Sending to ${jid}`);
+    console.log(`📤 Sending to ${jid}: "${message.substring(0, 30)}..."`);
     const result = await session.socket.sendMessage(jid, { text: message });
+    console.log(`✅ Message sent: ${result?.key?.id}`);
     res.json({ success: true, jid, messageId: result?.key?.id });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { console.error(`❌ Send error:`, error); res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/message/media', async (req, res) => {
