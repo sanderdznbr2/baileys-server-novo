@@ -9,7 +9,7 @@ console.log('[INIT] Node version:', process.version);
 console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(50));
 
-const VERSION = "v2.3.0";
+const VERSION = "v2.4.0";
 const app = express();
 
 app.use(cors());
@@ -18,7 +18,8 @@ app.use(express.json());
 // ============ CONFIGURAÇÃO ============
 const WEBHOOK_URL = process.env.SUPABASE_WEBHOOK_URL || '';
 const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
-const MAX_QR_RETRIES = 3; // Máximo de tentativas de gerar QR
+const MAX_QR_RETRIES = 5; // Aumentado para 5 tentativas
+const RETRY_DELAYS = [3000, 5000, 8000, 12000, 15000]; // Delays progressivos
 
 console.log('[CONFIG] Webhook URL:', WEBHOOK_URL ? 'Configurada' : 'NÃO configurada');
 console.log('[CONFIG] Sessions dir:', SESSIONS_DIR);
@@ -39,6 +40,8 @@ let useMultiFileAuthState = null;
 let DisconnectReason = null;
 let makeCacheableSignalKeyStore = null;
 let fetchLatestBaileysVersion = null;
+let Browsers = null;
+let delay = null;
 let QRCode = null;
 let pino = null;
 let baileysLoaded = false;
@@ -58,17 +61,27 @@ async function sendWebhook(payload) {
   }
 }
 
+// ============ DELAY HELPER ============
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // ============ CRIAR SOCKET PARA SESSÃO ============
 async function createSocketForSession(session) {
   const { sessionId, instanceName, webhookSecret } = session;
   const sessionPath = path.join(SESSIONS_DIR, sessionId);
   
-  // Limpar pasta de auth se existir e estamos recriando
+  // Limpar pasta de auth se existir e estamos recriando após falha
   if (session.qrRetryCount > 0) {
     try {
       fs.rmSync(sessionPath, { recursive: true, force: true });
       console.log(`[SOCKET] Limpou auth antiga para ${instanceName}`);
     } catch (e) {}
+    
+    // Aguardar antes de recriar (delay progressivo)
+    const delayMs = RETRY_DELAYS[Math.min(session.qrRetryCount - 1, RETRY_DELAYS.length - 1)];
+    console.log(`[SOCKET] Aguardando ${delayMs/1000}s antes de recriar socket...`);
+    await sleep(delayMs);
   }
   
   const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
@@ -78,7 +91,8 @@ async function createSocketForSession(session) {
 
   const logger = pino({ level: 'silent' });
   
-  const socket = makeWASocket({
+  // v2.4.0: Configuração mais robusta do socket
+  const socketConfig = {
     version,
     logger,
     printQRInTerminal: true,
@@ -86,13 +100,31 @@ async function createSocketForSession(session) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: ['Ellosuit CRM', 'Chrome', '120.0.0'],
-    connectTimeoutMs: 60000,
+    // Browser string que funciona melhor
+    browser: ['Ubuntu', 'Chrome', '120.0.6099.119'],
+    // Timeouts aumentados
+    connectTimeoutMs: 120000,
     defaultQueryTimeoutMs: 60000,
-    qrTimeout: 60000
-  });
+    qrTimeout: 60000,
+    // Opções para evitar sobrecarga
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: false,
+    // Retry interno desabilitado (controlamos manualmente)
+    retryRequestDelayMs: 2000,
+    maxMsgRetryCount: 1
+  };
+  
+  console.log('[SOCKET] Config:', JSON.stringify({
+    browser: socketConfig.browser,
+    connectTimeoutMs: socketConfig.connectTimeoutMs,
+    syncFullHistory: socketConfig.syncFullHistory
+  }));
+
+  const socket = makeWASocket(socketConfig);
 
   session.socket = socket;
+  session.socketCreatedAt = Date.now();
   socket.ev.on('creds.update', saveCreds);
 
   socket.ev.on('connection.update', async (update) => {
@@ -101,7 +133,8 @@ async function createSocketForSession(session) {
     if (qr) {
       session.qrCode = await QRCode.toDataURL(qr);
       session.qrGeneratedAt = Date.now();
-      console.log(`[QR] ✅ Gerado para ${instanceName}`);
+      session.status = 'waiting_qr';
+      console.log(`[QR] ✅ Gerado para ${instanceName} (após ${session.qrRetryCount} retries)`);
       await sendWebhook({
         event: 'qr.update',
         sessionId,
@@ -114,7 +147,9 @@ async function createSocketForSession(session) {
       session.isConnected = true;
       session.wasConnected = true;
       session.qrRetryCount = 0;
+      session.retryCount = 0;
       session.qrCode = null;
+      session.status = 'connected';
       const user = socket.user;
       if (user) {
         session.phoneNumber = user.id.split(':')[0].replace('@s.whatsapp.net', '');
@@ -133,8 +168,9 @@ async function createSocketForSession(session) {
       session.isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const hadQR = !!session.qrCode || !!session.qrGeneratedAt;
+      const socketAge = Date.now() - (session.socketCreatedAt || session.createdAt);
       
-      console.log(`[DISCONNECTED] ${instanceName} - Code: ${statusCode}, wasConnected: ${session.wasConnected}, hadQR: ${hadQR}, qrRetryCount: ${session.qrRetryCount}`);
+      console.log(`[DISCONNECTED] ${instanceName} - Code: ${statusCode}, wasConnected: ${session.wasConnected}, hadQR: ${hadQR}, qrRetryCount: ${session.qrRetryCount}, socketAge: ${socketAge}ms`);
       
       await sendWebhook({
         event: 'connection.update',
@@ -143,10 +179,19 @@ async function createSocketForSession(session) {
         data: { connection: 'close', isConnected: false, statusCode }
       });
       
-      // Lógica de reconexão
-      if (session.wasConnected && statusCode !== DisconnectReason?.loggedOut && session.retryCount < 5) {
+      // Lógica de reconexão melhorada v2.4.0
+      if (statusCode === DisconnectReason?.loggedOut) {
+        // Logout explícito - remover sessão
+        console.log(`[LOGOUT] ${instanceName} fez logout, removendo sessão`);
+        session.status = 'logged_out';
+        sessions.delete(sessionId);
+        try {
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+        } catch (e) {}
+      } else if (session.wasConnected && session.retryCount < 5) {
         // Já tinha conectado antes - reconectar normalmente
         session.retryCount++;
+        session.status = 'reconnecting';
         console.log(`[RECONNECT] Reconectando ${instanceName} em 3s... (tentativa ${session.retryCount}/5)`);
         setTimeout(async () => {
           try {
@@ -155,31 +200,28 @@ async function createSocketForSession(session) {
             console.error(`[RECONNECT] Erro:`, err.message);
           }
         }, 3000);
-      } else if (statusCode === DisconnectReason?.loggedOut) {
-        // Logout explícito
-        console.log(`[LOGOUT] ${instanceName} fez logout, removendo sessão`);
-        sessions.delete(sessionId);
-        try {
-          fs.rmSync(sessionPath, { recursive: true, force: true });
-        } catch (e) {}
       } else if (!session.wasConnected && !hadQR && session.qrRetryCount < MAX_QR_RETRIES) {
-        // v2.3.0: Nunca conectou E não gerou QR - TENTAR NOVAMENTE!
+        // v2.4.0: Nunca conectou E não gerou QR - TENTAR NOVAMENTE com delay maior
         session.qrRetryCount++;
-        const delay = 2000 * session.qrRetryCount; // Backoff: 2s, 4s, 6s
-        console.log(`[QR-RETRY] ${instanceName} desconectou sem QR, tentando novamente em ${delay/1000}s... (tentativa ${session.qrRetryCount}/${MAX_QR_RETRIES})`);
-        setTimeout(async () => {
+        session.status = 'retrying';
+        console.log(`[QR-RETRY] ${instanceName} desconectou sem QR, tentativa ${session.qrRetryCount}/${MAX_QR_RETRIES}`);
+        
+        // Criar socket de forma assíncrona (não bloquear)
+        setImmediate(async () => {
           try {
             await createSocketForSession(session);
           } catch (err) {
             console.error(`[QR-RETRY] Erro:`, err.message);
+            session.status = 'failed';
           }
-        }, delay);
+        });
       } else if (!session.wasConnected && hadQR) {
         // Tinha QR mas não escaneou - manter sessão esperando
+        session.status = 'waiting_scan';
         console.log(`[WAITING] ${instanceName} tem QR, aguardando escaneamento`);
       } else {
         // Esgotou tentativas
-        console.log(`[FAILED] ${instanceName} esgotou tentativas de gerar QR`);
+        console.log(`[FAILED] ${instanceName} esgotou tentativas de gerar QR (${session.qrRetryCount} tentativas)`);
         session.status = 'failed';
       }
     }
@@ -221,12 +263,13 @@ async function createSession(sessionId, instanceName, webhookSecret) {
   
   if (sessions.has(sessionId)) {
     const existing = sessions.get(sessionId);
-    // Se já existe mas não tem QR, recriar socket
-    if (!existing.qrCode && !existing.isConnected) {
+    // Se já existe mas não tem QR e não está conectado, recriar socket
+    if (!existing.qrCode && !existing.isConnected && existing.status !== 'retrying') {
       console.log(`[SESSION] ${sessionId} existe sem QR, recriando socket...`);
+      existing.qrRetryCount = 0; // Reset counter
       return await createSocketForSession(existing);
     }
-    console.log(`[SESSION] ${sessionId} já existe`);
+    console.log(`[SESSION] ${sessionId} já existe (status: ${existing.status})`);
     return existing;
   }
 
@@ -242,8 +285,9 @@ async function createSession(sessionId, instanceName, webhookSecret) {
     isConnected: false,
     wasConnected: false,
     retryCount: 0,
-    qrRetryCount: 0,  // v2.3.0: Contador de tentativas de gerar QR
+    qrRetryCount: 0,
     createdAt: Date.now(),
+    socketCreatedAt: null,
     phoneNumber: null,
     pushName: null,
     status: 'connecting'
@@ -282,7 +326,15 @@ app.post('/api/instance/create', async (req, res) => {
     }
     console.log(`[${VERSION}] Criando instância: ${instanceName}`);
     const session = await createSession(sessionId, instanceName, webhookSecret || '');
-    res.json({ success: true, version: VERSION, sessionId: session.sessionId, instanceName: session.instanceName, isConnected: session.isConnected, qrRetryCount: session.qrRetryCount });
+    res.json({ 
+      success: true, 
+      version: VERSION, 
+      sessionId: session.sessionId, 
+      instanceName: session.instanceName, 
+      isConnected: session.isConnected, 
+      qrRetryCount: session.qrRetryCount,
+      status: session.status
+    });
   } catch (error) {
     console.error('[ERROR] Criar instância:', error);
     res.status(500).json({ error: error.message });
@@ -308,33 +360,54 @@ app.get('/api/instance/:sessionId/status', (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: 'Sessão não encontrada', status: 'not_found' });
   res.json({
-    status: session.isConnected ? 'connected' : (session.qrCode ? 'waiting_qr' : (session.status || 'connecting')),
+    status: session.status,
     isConnected: session.isConnected,
     phoneNumber: session.phoneNumber,
     pushName: session.pushName,
     wasConnected: session.wasConnected,
     retryCount: session.retryCount,
     qrRetryCount: session.qrRetryCount,
-    sessionAge: Date.now() - session.createdAt
+    sessionAge: Date.now() - session.createdAt,
+    hasQR: !!session.qrCode
   });
 });
 
-// Forçar regeneração de QR (v2.3.0)
+// Forçar regeneração de QR (v2.4.0 - mais robusto)
 app.post('/api/instance/:sessionId/regenerate-qr', async (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
   
   console.log(`[REGENERATE] Forçando regeneração de QR para ${session.instanceName}`);
   
-  // Reset counters e recriar socket
+  // Fechar socket existente se houver
+  if (session.socket) {
+    try {
+      session.socket.end();
+    } catch (e) {}
+  }
+  
+  // Reset completo
+  session.socket = null;
   session.qrCode = null;
   session.qrGeneratedAt = null;
   session.qrRetryCount = 0;
+  session.retryCount = 0;
   session.status = 'connecting';
+  session.wasConnected = false;
+  
+  // Limpar pasta de auth
+  const sessionPath = path.join(SESSIONS_DIR, session.sessionId);
+  try {
+    fs.rmSync(sessionPath, { recursive: true, force: true });
+    console.log(`[REGENERATE] Auth limpa para ${session.instanceName}`);
+  } catch (e) {}
+  
+  // Aguardar um pouco antes de recriar
+  await sleep(2000);
   
   try {
     await createSocketForSession(session);
-    res.json({ success: true, message: 'Regenerando QR Code...' });
+    res.json({ success: true, message: 'Regenerando QR Code...', status: session.status });
   } catch (error) {
     console.error('[REGENERATE] Erro:', error);
     res.status(500).json({ error: error.message });
@@ -345,7 +418,14 @@ app.post('/api/instance/:sessionId/regenerate-qr', async (req, res) => {
 app.get('/api/instance/list', (req, res) => {
   const list = [];
   for (const [id, session] of sessions) {
-    list.push({ sessionId: id, instanceName: session.instanceName, isConnected: session.isConnected, phoneNumber: session.phoneNumber });
+    list.push({ 
+      sessionId: id, 
+      instanceName: session.instanceName, 
+      isConnected: session.isConnected, 
+      phoneNumber: session.phoneNumber,
+      status: session.status,
+      hasQR: !!session.qrCode
+    });
   }
   res.json({ sessions: list });
 });
@@ -355,7 +435,15 @@ app.delete('/api/instance/:sessionId', async (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
   try {
-    if (session.socket) await session.socket.logout();
+    if (session.socket) {
+      try {
+        await session.socket.logout();
+      } catch (e) {
+        try {
+          session.socket.end();
+        } catch (e2) {}
+      }
+    }
   } catch (e) {
     console.log('[LOGOUT] Erro:', e.message);
   }
@@ -423,6 +511,8 @@ async function loadBaileys() {
     DisconnectReason = baileys.DisconnectReason || baileys.default?.DisconnectReason;
     makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore || baileys.default?.makeCacheableSignalKeyStore;
     fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion || baileys.default?.fetchLatestBaileysVersion;
+    Browsers = baileys.Browsers || baileys.default?.Browsers;
+    delay = baileys.delay || baileys.default?.delay;
     
     if (!useMultiFileAuthState || !makeCacheableSignalKeyStore || !fetchLatestBaileysVersion) {
       throw new Error('Funções auxiliares do Baileys não encontradas');
@@ -431,6 +521,7 @@ async function loadBaileys() {
     baileysLoaded = true;
     console.log('[BAILEYS] @whiskeysockets/baileys carregado ✓');
     console.log('[BAILEYS] makeWASocket:', typeof makeWASocket);
+    console.log('[BAILEYS] Browsers:', typeof Browsers);
     console.log('[BAILEYS] Pronto para criar sessões!');
   } catch (err) {
     console.error('[BAILEYS] ERRO ao carregar:', err.message);
