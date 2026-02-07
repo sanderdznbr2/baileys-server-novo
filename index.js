@@ -1,12 +1,12 @@
 /**
  * ============================================
- * BAILEYS SERVER v3.6.0
+ * BAILEYS SERVER v3.7.0
  * ============================================
- * SEM HISTÓRICO - Apenas mensagens novas em tempo real
- * - Desabilita sincronização de histórico completamente
- * - Busca groupMetadata para nomes corretos de grupos
- * - Extrai sender_phone corretamente do participant
- * - Cache de metadados para performance
+ * Servidor WhatsApp estável e completo
+ * - Heartbeat automático (25s)
+ * - Reconexão com backoff exponencial
+ * - Sincronização completa de contatos
+ * - Upload de mídia com retry inteligente
  * Para WhatsApp CRM - Lovable
  * ============================================
  */
@@ -17,7 +17,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Dynamic imports for ESM modules
 let makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, downloadMediaMessage, Browsers;
 let QRCode, pino, mime, supabase;
 
@@ -25,38 +24,28 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Store sessions in memory
 const sessions = new Map();
-
-// Cache for group metadata (persists across messages)
 const groupMetadataCache = new Map();
+const profilePicCache = new Map();
+const GROUP_CACHE_TTL = 10 * 60 * 1000;
+const PROFILE_PIC_CACHE_TTL = 30 * 60 * 1000;
 
-// Environment variables
 const WEBHOOK_URL = process.env.SUPABASE_WEBHOOK_URL || '';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-// Sessions directory
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
-if (!fs.existsSync(SESSIONS_DIR)) {
-  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-}
-
-// ============== HELPERS ==============
+if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 
 function extractPhoneFromJid(jid) {
-  if (!jid) return null;
-  if (jid.includes('@lid')) return null;
+  if (!jid || jid.includes('@lid')) return null;
   const parts = jid.split('@');
   if (parts.length < 1) return null;
   const digits = parts[0].replace(/\D/g, '');
-  if (digits.length < 8) return null;
-  return digits;
+  return digits.length >= 8 ? digits : null;
 }
 
-function isGroupJid(jid) {
-  return jid?.includes('@g.us') || false;
-}
+function isGroupJid(jid) { return jid?.includes('@g.us') || false; }
 
 function formatJidForSend(phone, isGroup = false) {
   let jid = phone.replace(/\D/g, '');
@@ -69,365 +58,254 @@ function formatJidForSend(phone, isGroup = false) {
 }
 
 async function getGroupMetadata(socket, groupJid) {
-  if (groupMetadataCache.has(groupJid)) {
-    const cached = groupMetadataCache.get(groupJid);
-    if (Date.now() - cached.timestamp < 5 * 60 * 1000) {
-      return cached.data;
-    }
-  }
+  const cached = groupMetadataCache.get(groupJid);
+  if (cached && Date.now() - cached.timestamp < GROUP_CACHE_TTL) return cached.data;
   try {
     const metadata = await socket.groupMetadata(groupJid);
     if (metadata) {
       groupMetadataCache.set(groupJid, { data: metadata, timestamp: Date.now() });
       return metadata;
     }
-  } catch (e) {
-    console.log(`⚠️ Could not fetch group metadata for ${groupJid}: ${e.message}`);
-  }
+  } catch (e) { console.log(`⚠️ Group metadata error: ${e.message}`); }
   return null;
 }
 
-// ============== SUPABASE STORAGE ==============
-
-async function uploadMediaToSupabase(buffer, sessionId, mediaType, extension) {
-  if (!supabase || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    console.log('⚠️ Supabase not configured for media upload');
-    return null;
-  }
+async function getProfilePicture(socket, jid) {
+  const cached = profilePicCache.get(jid);
+  if (cached && Date.now() - cached.timestamp < PROFILE_PIC_CACHE_TTL) return cached.url;
   try {
-    const timestamp = Date.now();
-    const hash = crypto.randomBytes(8).toString('hex');
-    const fileName = `${sessionId}/${mediaType}/${timestamp}-${hash}.${extension}`;
-    const mimeType = mime.lookup(extension) || 'application/octet-stream';
-    console.log(`📤 Uploading media to Supabase: ${fileName}`);
-    const { data, error } = await supabase.storage
-      .from('whatsapp-media')
-      .upload(fileName, buffer, { contentType: mimeType, upsert: false });
-    if (error) {
-      console.error('❌ Supabase upload error:', error.message);
-      return null;
-    }
-    const { data: urlData } = supabase.storage.from('whatsapp-media').getPublicUrl(fileName);
-    console.log(`✅ Media uploaded: ${urlData.publicUrl}`);
-    return { url: urlData.publicUrl, mimeType };
-  } catch (error) {
-    console.error('❌ Upload error:', error.message);
+    const url = await socket.profilePictureUrl(jid, 'image');
+    profilePicCache.set(jid, { url, timestamp: Date.now() });
+    return url;
+  } catch (e) {
+    profilePicCache.set(jid, { url: null, timestamp: Date.now() });
     return null;
   }
 }
 
-// ============== MEDIA PROCESSING ==============
+async function uploadMediaToSupabase(buffer, sessionId, mediaType, extension) {
+  if (!supabase) return null;
+  try {
+    const fileName = `${sessionId}/${mediaType}/${Date.now()}-${crypto.randomBytes(8).toString('hex')}.${extension}`;
+    const mimeType = mime.lookup(extension) || 'application/octet-stream';
+    const { error } = await supabase.storage.from('whatsapp-media').upload(fileName, buffer, { contentType: mimeType, upsert: false });
+    if (error) { console.error('❌ Upload error:', error.message); return null; }
+    const { data: urlData } = supabase.storage.from('whatsapp-media').getPublicUrl(fileName);
+    console.log(`✅ Uploaded: ${urlData.publicUrl}`);
+    return { url: urlData.publicUrl, mimeType };
+  } catch (error) { console.error('❌ Upload error:', error.message); return null; }
+}
 
 async function processMediaMessage(socket, msg, sessionId) {
   try {
     const message = msg.message;
     if (!message) return null;
-    let mediaType = null;
-    let mediaMessage = null;
-    let extension = '';
-    if (message.imageMessage) {
-      mediaType = 'image'; mediaMessage = message.imageMessage; extension = 'jpg';
-    } else if (message.videoMessage) {
-      mediaType = 'video'; mediaMessage = message.videoMessage; extension = 'mp4';
-    } else if (message.audioMessage) {
-      mediaType = message.audioMessage.ptt ? 'ptt' : 'audio';
-      mediaMessage = message.audioMessage;
-      extension = message.audioMessage.ptt ? 'ogg' : 'mp3';
-    } else if (message.documentMessage) {
-      mediaType = 'document'; mediaMessage = message.documentMessage;
-      const fileName = mediaMessage.fileName || '';
-      extension = fileName.split('.').pop() || 'pdf';
-    } else if (message.stickerMessage) {
-      mediaType = 'sticker'; mediaMessage = message.stickerMessage; extension = 'webp';
-    }
-    if (!mediaType || !mediaMessage) return null;
-    console.log(`📥 Downloading ${mediaType} media...`);
+    let mediaType = null, extension = '';
+    if (message.imageMessage) { mediaType = 'image'; extension = 'jpg'; }
+    else if (message.videoMessage) { mediaType = 'video'; extension = 'mp4'; }
+    else if (message.audioMessage) { mediaType = message.audioMessage.ptt ? 'ptt' : 'audio'; extension = message.audioMessage.ptt ? 'ogg' : 'mp3'; }
+    else if (message.documentMessage) { mediaType = 'document'; extension = (message.documentMessage.fileName || '').split('.').pop() || 'pdf'; }
+    else if (message.stickerMessage) { mediaType = 'sticker'; extension = 'webp'; }
+    if (!mediaType) return null;
+    console.log(`📥 Downloading ${mediaType}...`);
     let buffer = null;
-    let retries = 3;
-    while (retries > 0 && !buffer) {
+    for (let attempt = 1; attempt <= 5 && !buffer; attempt++) {
       try {
-        buffer = await downloadMediaMessage(msg, 'buffer', {}, {
-          logger: console, reuploadRequest: socket.updateMediaMessage
-        });
-      } catch (downloadError) {
-        console.log(`⚠️ Download attempt failed, ${retries - 1} retries left...`);
-        retries--;
-        if (retries > 0) await new Promise(resolve => setTimeout(resolve, 1000));
+        buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: console, reuploadRequest: socket.updateMediaMessage });
+      } catch (e) {
+        console.log(`⚠️ Attempt ${attempt}/5 failed`);
+        if (attempt < 5) await new Promise(r => setTimeout(r, attempt * 1000));
       }
     }
-    if (!buffer) {
-      console.error('❌ Failed to download media after all retries');
-      return { mediaType };
-    }
-    console.log(`✅ Media downloaded: ${buffer.length} bytes`);
+    if (!buffer) return { mediaType };
+    console.log(`✅ Downloaded: ${buffer.length} bytes`);
     const uploadResult = await uploadMediaToSupabase(buffer, sessionId, mediaType, extension);
-    if (uploadResult) {
-      return { mediaUrl: uploadResult.url, mediaMimeType: uploadResult.mimeType, mediaType };
-    }
-    return { mediaType };
-  } catch (error) {
-    console.error('❌ Error processing media:', error.message);
-    return null;
-  }
+    return uploadResult ? { mediaUrl: uploadResult.url, mediaMimeType: uploadResult.mimeType, mediaType } : { mediaType };
+  } catch (error) { console.error('❌ Media error:', error.message); return null; }
 }
 
 function hasMedia(msg) {
-  const message = msg.message;
-  if (!message) return false;
-  return !!(message.imageMessage || message.videoMessage || message.audioMessage || message.documentMessage || message.stickerMessage);
+  const m = msg.message;
+  return m && !!(m.imageMessage || m.videoMessage || m.audioMessage || m.documentMessage || m.stickerMessage);
 }
 
 function getMediaCaption(msg) {
-  const message = msg.message;
-  if (!message) return '';
-  return message.imageMessage?.caption || message.videoMessage?.caption || message.documentMessage?.caption || message.documentMessage?.fileName || '';
+  const m = msg.message;
+  return m?.imageMessage?.caption || m?.videoMessage?.caption || m?.documentMessage?.caption || m?.documentMessage?.fileName || '';
 }
 
-// ============== WEBHOOK ==============
+function getTextContent(msg) {
+  const m = msg.message;
+  return m?.conversation || m?.extendedTextMessage?.text || '';
+}
 
 async function sendWebhook(payload) {
-  if (!WEBHOOK_URL) {
-    console.log('⚠️ No webhook URL configured');
-    return;
-  }
+  if (!WEBHOOK_URL) return false;
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': payload.webhookSecret || '' },
-      body: JSON.stringify(payload)
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-webhook-secret': payload.webhookSecret || '' },
+      body: JSON.stringify(payload), signal: controller.signal
     });
-    if (response.ok) {
-      console.log(`📤 Webhook sent: ${payload.event}`);
-    } else {
-      console.log(`⚠️ Webhook response: ${response.status}`);
-    }
-  } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-  }
+    clearTimeout(timeout);
+    console.log(`📤 Webhook ${response.ok ? 'OK' : response.status}: ${payload.event}`);
+    return response.ok;
+  } catch (error) { console.error('❌ Webhook error:', error.message); return false; }
 }
 
-// ============== WHATSAPP SESSION ==============
-
-async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
-  if (sessions.has(sessionId)) {
-    console.log(`ℹ️ Session ${instanceName} already exists`);
+async function createWhatsAppSession(sessionId, instanceName, webhookSecret, reconnectAttempt = 0) {
+  if (sessions.has(sessionId) && sessions.get(sessionId).isConnected) {
+    console.log(`ℹ️ Session ${instanceName} already connected`);
     return sessions.get(sessionId);
   }
   const sessionPath = path.join(SESSIONS_DIR, instanceName);
   const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
   const { version } = await fetchLatestBaileysVersion();
-  console.log(`📱 Creating session: ${instanceName} (Baileys v${version.join('.')})`);
-  console.log(`🚫 History sync: DISABLED - Only real-time messages will be processed`);
+  console.log(`📱 Creating: ${instanceName} (v${version.join('.')})`);
 
-  const session = {
-    sessionId, instanceName, socket: null, webhookSecret,
-    qrCode: null, isConnected: false, phoneNumber: null, pushName: null, profilePicture: null
-  };
+  const session = { sessionId, instanceName, socket: null, webhookSecret, qrCode: null, isConnected: false, phoneNumber: null, pushName: null, profilePicture: null, contacts: new Map() };
   sessions.set(sessionId, session);
 
   const logger = pino({ level: 'silent' });
-
   const socket = makeWASocket({
     version, logger, printQRInTerminal: true,
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-    browser: Browsers.macOS('Desktop'),
-    connectTimeoutMs: 60000,
-    qrTimeout: 60000,
-    // ============== v3.6.0: DISABLE HISTORY SYNC ==============
-    syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false,
-    fireInitQueries: false
+    browser: Browsers.macOS('Desktop'), connectTimeoutMs: 90000, qrTimeout: 60000, keepAliveIntervalMs: 25000,
+    syncFullHistory: false, shouldSyncHistoryMessage: () => false, fireInitQueries: true,
+    generateHighQualityLinkPreview: false, markOnlineOnConnect: true
   });
-
   session.socket = socket;
   socket.ev.on('creds.update', saveCreds);
 
-  // Connection updates
   socket.ev.on('connection.update', async (update) => {
     const { qr, connection, lastDisconnect } = update;
     if (qr) {
       session.qrCode = await QRCode.toDataURL(qr);
-      console.log(`📱 QR Code generated for ${instanceName}`);
+      console.log(`📱 QR generated`);
       await sendWebhook({ event: 'qr.update', sessionId, instanceName, webhookSecret, data: { qrCode: session.qrCode } });
     }
     if (connection === 'open') {
-      session.isConnected = true;
-      session.qrCode = null;
+      session.isConnected = true; session.qrCode = null; reconnectAttempt = 0;
       const user = socket.user;
       if (user) {
         session.phoneNumber = user.id.split(':')[0].replace('@s.whatsapp.net', '');
         session.pushName = user.name || user.notify || null;
-        try { session.profilePicture = await socket.profilePictureUrl(user.id, 'image'); } catch (e) { session.profilePicture = null; }
+        session.profilePicture = await getProfilePicture(socket, user.id);
       }
-      console.log(`✅ ${instanceName} connected! Phone: ${session.phoneNumber}`);
-      console.log(`🚫 History sync disabled - Only new messages will appear`);
-      await sendWebhook({
-        event: 'connection.update', sessionId, instanceName, webhookSecret,
-        data: { connection: 'open', isConnected: true, phoneNumber: session.phoneNumber, pushName: session.pushName, profilePicture: session.profilePicture }
-      });
+      console.log(`✅ Connected: ${session.phoneNumber}`);
+      await sendWebhook({ event: 'connection.update', sessionId, instanceName, webhookSecret, data: { connection: 'open', isConnected: true, phoneNumber: session.phoneNumber, pushName: session.pushName, profilePicture: session.profilePicture } });
     }
     if (connection === 'close') {
       session.isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
-      console.log(`❌ ${instanceName} disconnected. Code: ${statusCode}. Reconnect: ${shouldReconnect}`);
+      console.log(`❌ Disconnected: ${statusCode}`);
       await sendWebhook({ event: 'connection.update', sessionId, instanceName, webhookSecret, data: { connection: 'close', isConnected: false, statusCode } });
-      if (statusCode === 515) {
-        console.log('⚡ Quick reconnect for 515...');
+      if (shouldReconnect) {
         sessions.delete(sessionId);
-        setTimeout(() => createWhatsAppSession(sessionId, instanceName, webhookSecret), 1000);
-      } else if (shouldReconnect) {
-        sessions.delete(sessionId);
-        setTimeout(() => createWhatsAppSession(sessionId, instanceName, webhookSecret), 5000);
-      } else {
-        sessions.delete(sessionId);
-      }
+        const delay = Math.min(Math.pow(2, reconnectAttempt) * 1000, 30000);
+        console.log(`🔄 Reconnecting in ${delay}ms...`);
+        setTimeout(() => createWhatsAppSession(sessionId, instanceName, webhookSecret, reconnectAttempt + 1), delay);
+      } else { sessions.delete(sessionId); }
     }
   });
 
-  // ============== v3.6.0: ONLY REAL-TIME MESSAGES ==============
-  socket.ev.on('messages.upsert', async ({ messages, type }) => {
-    // CRITICAL: Only process 'notify' (real-time messages)
-    if (type !== 'notify') {
-      console.log(`⏭️ Skipping ${messages.length} messages (type: ${type}) - only real-time messages are processed`);
-      return;
+  socket.ev.on('contacts.set', async ({ contacts }) => {
+    console.log(`👥 Received ${contacts?.length || 0} contacts`);
+    if (!contacts?.length) return;
+    const enriched = [];
+    for (const c of contacts) {
+      const phone = extractPhoneFromJid(c.id);
+      if (!phone) continue;
+      const e = { id: c.id, phone, name: c.name || c.notify || c.verifiedName || null, pushName: c.notify || null, isGroup: isGroupJid(c.id) };
+      session.contacts.set(phone, e);
+      enriched.push(e);
     }
-    console.log(`📨 Processing ${messages.length} REAL-TIME messages`);
+    console.log(`👥 Processed ${enriched.length} contacts`);
+    const batchSize = 100;
+    for (let i = 0; i < enriched.length; i += batchSize) {
+      await sendWebhook({ event: 'contacts.set', sessionId, instanceName, webhookSecret, data: { contacts: enriched.slice(i, i + batchSize), total: enriched.length } });
+    }
+  });
 
+  socket.ev.on('contacts.update', async (updates) => {
+    const enriched = [];
+    for (const c of updates || []) {
+      const phone = extractPhoneFromJid(c.id);
+      if (!phone) continue;
+      const existing = session.contacts.get(phone) || {};
+      const e = { ...existing, id: c.id, phone, name: c.name || c.notify || existing.name || null, pushName: c.notify || existing.pushName || null };
+      session.contacts.set(phone, e);
+      enriched.push(e);
+    }
+    if (enriched.length) await sendWebhook({ event: 'contacts.update', sessionId, instanceName, webhookSecret, data: { contacts: enriched } });
+  });
+
+  socket.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') { console.log(`⏭️ Skipping ${messages.length} (type: ${type})`); return; }
+    console.log(`📨 Processing ${messages.length} messages`);
     for (const msg of messages) {
       if (msg.key.remoteJid === 'status@broadcast') continue;
+      if (msg.message?.protocolMessage || msg.message?.reactionMessage) continue;
       const remoteJid = msg.key.remoteJid;
+      if (remoteJid?.includes('@lid')) continue;
       const fromMe = msg.key.fromMe || false;
       const isGroup = isGroupJid(remoteJid);
-
-      let senderPhone = '';
-      let senderName = '';
-      let groupName = '';
-      let groupProfilePic = null;
-      
+      let senderPhone = '', senderName = '', groupName = '', groupProfilePic = null, contactProfilePic = null;
       if (isGroup) {
-        const groupMetadata = await getGroupMetadata(socket, remoteJid);
-        if (groupMetadata) {
-          groupName = groupMetadata.subject || '';
-          console.log(`👥 Group: "${groupName}" (${remoteJid})`);
-          try { groupProfilePic = await socket.profilePictureUrl(remoteJid, 'image'); } catch (e) {}
+        const meta = await getGroupMetadata(socket, remoteJid);
+        if (meta) groupName = meta.subject || '';
+        groupProfilePic = await getProfilePicture(socket, remoteJid);
+        if (!fromMe && msg.key.participant) {
+          senderPhone = extractPhoneFromJid(msg.key.participant) || '';
+          senderName = msg.pushName || '';
         }
-        if (!fromMe) {
-          const participantJid = msg.key.participant;
-          if (participantJid) {
-            senderPhone = extractPhoneFromJid(participantJid) || '';
-            senderName = msg.pushName || '';
-            console.log(`👤 Sender: "${senderName}" (${senderPhone})`);
-          }
-        }
-      } else if (!fromMe) {
-        senderPhone = extractPhoneFromJid(remoteJid) || '';
-        senderName = msg.pushName || '';
+      } else {
+        if (!fromMe) { senderPhone = extractPhoneFromJid(remoteJid) || ''; senderName = msg.pushName || ''; }
+        contactProfilePic = await getProfilePicture(socket, remoteJid);
       }
-
-      let mediaUrl = null;
-      let mediaMimeType = null;
-      let mediaType = null;
-      let mediaCaption = getMediaCaption(msg);
-
+      let mediaUrl = null, mediaMimeType = null, mediaType = null;
+      const mediaCaption = getMediaCaption(msg);
       if (hasMedia(msg)) {
-        console.log(`📨 Media message from ${remoteJid}`);
         const mediaResult = await processMediaMessage(socket, msg, sessionId);
-        if (mediaResult) {
-          mediaUrl = mediaResult.mediaUrl || null;
-          mediaMimeType = mediaResult.mediaMimeType || null;
-          mediaType = mediaResult.mediaType || null;
-        }
+        if (mediaResult) { mediaUrl = mediaResult.mediaUrl || null; mediaMimeType = mediaResult.mediaMimeType || null; mediaType = mediaResult.mediaType || null; }
       }
-
-      let senderProfilePic = null;
-      if (!isGroup) {
-        try { senderProfilePic = await socket.profilePictureUrl(remoteJid, 'image'); } catch (e) {}
-      }
-
       await sendWebhook({
         event: 'messages.upsert', sessionId, instanceName, webhookSecret,
-        data: {
-          messages: [{
-            key: msg.key, message: msg.message, messageTimestamp: msg.messageTimestamp, pushName: msg.pushName,
-            groupName, groupSubject: groupName, groupProfilePic, isGroup,
-            senderPhone, senderName,
-            mediaUrl, mediaMimeType, mediaType, mediaCaption,
-            senderProfilePic,
-            syncType: 'realtime'
-          }]
-        }
+        data: { messages: [{ key: msg.key, message: msg.message, messageTimestamp: msg.messageTimestamp, pushName: msg.pushName, groupName, groupSubject: groupName, groupProfilePic, isGroup, senderPhone, senderName, mediaUrl, mediaMimeType, mediaType, mediaCaption, senderProfilePic: contactProfilePic, syncType: 'realtime' }] }
       });
     }
   });
 
-  socket.ev.on('messages.update', async (updates) => {
-    await sendWebhook({ event: 'messages.update', sessionId, instanceName, webhookSecret, data: { updates } });
-  });
-
-  // ============== v3.6.0: MINIMAL CHAT SYNC ==============
+  socket.ev.on('messages.update', async (updates) => { await sendWebhook({ event: 'messages.update', sessionId, instanceName, webhookSecret, data: { updates } }); });
   socket.ev.on('chats.upsert', async (chats) => {
-    console.log(`📋 [CHATS.UPSERT] ${chats.length} new/updated chats`);
-    const enrichedChats = [];
+    const enriched = [];
     for (const chat of chats) {
-      const jid = chat.id;
-      const isGroup = isGroupJid(jid);
-      let enrichedChat = { ...chat };
-      if (isGroup) {
-        const metadata = await getGroupMetadata(socket, jid);
-        if (metadata) {
-          enrichedChat.groupSubject = metadata.subject;
-          enrichedChat.subject = metadata.subject;
-          enrichedChat.groupName = metadata.subject;
-          enrichedChat.name = metadata.subject;
-          try { enrichedChat.profilePicture = await socket.profilePictureUrl(jid, 'image'); } catch (e) {}
-        }
-      } else {
-        try { enrichedChat.profilePicture = await socket.profilePictureUrl(jid, 'image'); } catch (e) {}
-      }
-      enrichedChats.push(enrichedChat);
+      const jid = chat.id, isGroup = isGroupJid(jid);
+      let e = { ...chat };
+      if (isGroup) { const meta = await getGroupMetadata(socket, jid); if (meta) { e.groupSubject = meta.subject; e.name = meta.subject; } }
+      e.profilePicture = await getProfilePicture(socket, jid);
+      enriched.push(e);
     }
-    await sendWebhook({ event: 'chats.upsert', sessionId, instanceName, webhookSecret, data: { chats: enrichedChats } });
+    await sendWebhook({ event: 'chats.upsert', sessionId, instanceName, webhookSecret, data: { chats: enriched } });
   });
-
-  // ============== v3.6.0: IGNORE HISTORY SYNC EVENTS ==============
-  socket.ev.on('chats.set', async ({ chats }) => {
-    console.log(`🚫 [CHATS.SET] Ignoring ${chats.length} historical chats (history sync disabled)`);
-  });
-
-  socket.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
-    console.log(`🚫 [HISTORY SYNC] Ignoring ${chats?.length || 0} chats, ${messages?.length || 0} messages (history sync disabled)`);
-  });
-
-  socket.ev.on('contacts.update', async (contacts) => {
-    await sendWebhook({ event: 'contacts.update', sessionId, instanceName, webhookSecret, data: { contacts } });
-  });
-
+  socket.ev.on('chats.set', async ({ chats }) => { console.log(`🚫 Ignoring ${chats?.length || 0} historical chats`); });
+  socket.ev.on('messaging-history.set', async () => { console.log(`🚫 Ignoring history sync`); });
   return session;
 }
 
-// ============== API ROUTES ==============
-
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok', version: '3.6.0', historySync: false,
-    sessions: sessions.size, mediaSupport: !!(SUPABASE_URL && SUPABASE_SERVICE_KEY),
-    groupMetadataCache: groupMetadataCache.size, timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'ok', version: '3.7.0', features: { contactsSync: true, mediaUpload: !!supabase, heartbeat: true }, sessions: sessions.size, timestamp: new Date().toISOString() });
 });
 
 app.post('/api/instance/create', async (req, res) => {
   try {
     const { sessionId, instanceName, webhookSecret } = req.body;
-    if (!sessionId || !instanceName) {
-      return res.status(400).json({ error: 'sessionId and instanceName required' });
-    }
+    if (!sessionId || !instanceName) return res.status(400).json({ error: 'sessionId and instanceName required' });
     const session = await createWhatsAppSession(sessionId, instanceName, webhookSecret || '');
     res.json({ success: true, sessionId: session.sessionId, instanceName: session.instanceName, isConnected: session.isConnected });
-  } catch (error) {
-    console.error('❌ Create instance error:', error);
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/instance/:sessionId/qr', (req, res) => {
@@ -439,96 +317,82 @@ app.get('/api/instance/:sessionId/qr', (req, res) => {
 app.get('/api/instance/:sessionId/status', (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: 'Session not found', status: 'not_found' });
-  res.json({ status: session.isConnected ? 'connected' : (session.qrCode ? 'waiting_qr' : 'connecting'), isConnected: session.isConnected, phoneNumber: session.phoneNumber, pushName: session.pushName, profilePicture: session.profilePicture });
+  res.json({ status: session.isConnected ? 'connected' : (session.qrCode ? 'waiting_qr' : 'connecting'), isConnected: session.isConnected, phoneNumber: session.phoneNumber, pushName: session.pushName, profilePicture: session.profilePicture, contactsCount: session.contacts?.size || 0 });
 });
 
 app.get('/api/instance/list', (req, res) => {
   const list = [];
-  for (const [id, session] of sessions) {
-    list.push({ sessionId: id, instanceName: session.instanceName, isConnected: session.isConnected, phoneNumber: session.phoneNumber });
-  }
+  for (const [id, session] of sessions) list.push({ sessionId: id, instanceName: session.instanceName, isConnected: session.isConnected, phoneNumber: session.phoneNumber });
   res.json({ sessions: list });
 });
 
 app.delete('/api/instance/:sessionId', async (req, res) => {
   const session = sessions.get(req.params.sessionId);
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  try { if (session.socket) await session.socket.logout(); } catch (e) { console.log('Logout error:', e.message); }
+  try { if (session.socket) await session.socket.logout(); } catch (e) {}
   const sessionPath = path.join(SESSIONS_DIR, session.instanceName);
   if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true });
   sessions.delete(req.params.sessionId);
   res.json({ success: true });
 });
 
+app.get('/api/contacts/:sessionId', (req, res) => {
+  const session = sessions.get(req.params.sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  res.json({ success: true, count: session.contacts?.size || 0, contacts: Array.from(session.contacts?.values() || []) });
+});
+
 app.post('/api/message/send', async (req, res) => {
   try {
     const { sessionId, phone, message, isGroup } = req.body;
     const session = sessions.get(sessionId);
-    if (!session || !session.socket || !session.isConnected) {
-      return res.status(400).json({ error: 'Session not connected' });
-    }
+    if (!session?.socket?.isConnected) return res.status(400).json({ error: 'Session not connected' });
     const jid = formatJidForSend(phone, isGroup);
-    console.log(`📤 Sending message to ${jid}: ${message.substring(0, 50)}...`);
-    await session.socket.sendMessage(jid, { text: message });
-    res.json({ success: true, jid });
-  } catch (error) {
-    console.error('❌ Send message error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    console.log(`📤 Sending to ${jid}`);
+    const result = await session.socket.sendMessage(jid, { text: message });
+    res.json({ success: true, jid, messageId: result?.key?.id });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/message/media', async (req, res) => {
   try {
-    const { sessionId, phone, mediaUrl, mediaType, caption, isGroup } = req.body;
+    const { sessionId, phone, mediaUrl, mediaType, caption, isGroup, fileName } = req.body;
     const session = sessions.get(sessionId);
-    if (!session || !session.socket || !session.isConnected) {
-      return res.status(400).json({ error: 'Session not connected' });
-    }
+    if (!session?.socket?.isConnected) return res.status(400).json({ error: 'Session not connected' });
     const jid = formatJidForSend(phone, isGroup);
-    let messageContent = {};
-    if (mediaType === 'image') messageContent = { image: { url: mediaUrl }, caption: caption || '' };
-    else if (mediaType === 'video') messageContent = { video: { url: mediaUrl }, caption: caption || '' };
-    else if (mediaType === 'audio') messageContent = { audio: { url: mediaUrl }, mimetype: 'audio/mpeg' };
-    else if (mediaType === 'document') messageContent = { document: { url: mediaUrl }, fileName: caption || 'document' };
+    let content = {};
+    if (mediaType === 'image') content = { image: { url: mediaUrl }, caption: caption || '' };
+    else if (mediaType === 'video') content = { video: { url: mediaUrl }, caption: caption || '' };
+    else if (mediaType === 'audio') content = { audio: { url: mediaUrl }, mimetype: 'audio/mpeg' };
+    else if (mediaType === 'ptt') content = { audio: { url: mediaUrl }, mimetype: 'audio/ogg; codecs=opus', ptt: true };
+    else if (mediaType === 'document') content = { document: { url: mediaUrl }, fileName: fileName || caption || 'document' };
+    else return res.status(400).json({ error: 'Invalid mediaType' });
     console.log(`📤 Sending ${mediaType} to ${jid}`);
-    await session.socket.sendMessage(jid, messageContent);
-    res.json({ success: true, jid });
-  } catch (error) {
-    console.error('❌ Send media error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    const result = await session.socket.sendMessage(jid, content);
+    res.json({ success: true, jid, messageId: result?.key?.id });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/group/:sessionId/:groupId', async (req, res) => {
   try {
     const session = sessions.get(req.params.sessionId);
-    if (!session || !session.socket) return res.status(404).json({ error: 'Session not found' });
+    if (!session?.socket) return res.status(404).json({ error: 'Session not found' });
     const groupJid = req.params.groupId.includes('@') ? req.params.groupId : `${req.params.groupId}@g.us`;
     const metadata = await getGroupMetadata(session.socket, groupJid);
     if (metadata) res.json({ success: true, metadata });
     else res.status(404).json({ error: 'Group not found' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/profile/:sessionId/:jid', async (req, res) => {
   try {
     const session = sessions.get(req.params.sessionId);
-    if (!session || !session.socket) return res.status(404).json({ error: 'Session not found' });
+    if (!session?.socket) return res.status(404).json({ error: 'Session not found' });
     const jid = req.params.jid.includes('@') ? req.params.jid : `${req.params.jid}@s.whatsapp.net`;
-    try {
-      const url = await session.socket.profilePictureUrl(jid, 'image');
-      res.json({ success: true, url });
-    } catch (e) {
-      res.json({ success: false, url: null });
-    }
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const url = await getProfilePicture(session.socket, jid);
+    res.json({ success: true, url });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
-
-// ============== INITIALIZATION ==============
 
 async function init() {
   const baileys = await import('@whiskeysockets/baileys');
@@ -539,32 +403,18 @@ async function init() {
   makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
   downloadMediaMessage = baileys.downloadMediaMessage;
   Browsers = baileys.Browsers;
-
-  const qrModule = await import('qrcode');
-  QRCode = qrModule.default;
-
-  const pinoModule = await import('pino');
-  pino = pinoModule.default;
-
-  const mimeModule = await import('mime-types');
-  mime = mimeModule.default;
-
+  QRCode = (await import('qrcode')).default;
+  pino = (await import('pino')).default;
+  mime = (await import('mime-types')).default;
   if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
     const { createClient } = await import('@supabase/supabase-js');
     supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    console.log('✅ Supabase client initialized for media storage');
-  } else {
-    console.log('⚠️ Supabase not configured - media will not be uploaded');
+    console.log('✅ Supabase initialized');
   }
-
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`\n🚀 Baileys Server v3.6.0 running on port ${PORT}`);
-    console.log(`🚫 History sync: DISABLED`);
-    console.log(`📨 Only real-time messages will be processed`);
-    console.log(`🔗 Webhook URL: ${WEBHOOK_URL || 'Not configured'}`);
-    console.log(`📁 Sessions directory: ${SESSIONS_DIR}`);
-    console.log(`☁️ Supabase media: ${supabase ? 'Enabled' : 'Disabled'}\n`);
+    console.log(`\n🚀 Baileys Server v3.7.0 on port ${PORT}`);
+    console.log(`💓 Heartbeat: 25s | 👥 Contacts: ON | ☁️ Media: ${supabase ? 'ON' : 'OFF'}\n`);
   });
 }
 

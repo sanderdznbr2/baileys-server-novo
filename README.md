@@ -1,43 +1,37 @@
-# 🚀 Baileys Server v3.6.0 - SEM Histórico
+# 🚀 Baileys Server v3.7.0 - Estável e Completo
 
-## ✅ Novidades v3.6.0
+## ✨ Novidades v3.7.0
 
-### 🚫 HISTÓRICO DESABILITADO
-- **Sem conversas antigas** - Apenas mensagens novas após conexão
-- **Sem grupos antigos** - Grupos aparecem quando há nova mensagem
-- **Performance otimizada** - Conexão muito mais rápida
+### 🔄 Estabilidade
+- **Heartbeat automático** - Ping a cada 25s mantém conexão
+- **Reconexão inteligente** - Backoff exponencial
+- **Timeout configurável** - 90s para conexão inicial
 
-### Principais Features:
-- ✅ **NOMES DE GRUPOS CORRETOS** - Busca groupMetadata automaticamente
-- ✅ **REMETENTES EM GRUPOS** - sender_phone e sender_name corretos
-- ✅ **FOTOS DE PERFIL** - Para contatos e grupos
-- ✅ **MÍDIAS** - Imagens, vídeos, áudios, documentos
+### 👥 Contatos
+- **Sincronização completa** - Todos os contatos ao conectar
+- **Fotos de perfil** - Busca automática com cache
+
+### 📸 Mídia
+- **Upload automático** - Supabase Storage
+- **Retry inteligente** - 5 tentativas
+- **Todos os tipos** - Imagens, vídeos, áudios, documentos
 
 ## Deploy no Railway
 
-### 1. Suba para o GitHub
-- Substitua **TODOS** os arquivos
-- **IMPORTANTE:** Delete a pasta `sessions/` para uma nova conexão limpa
-
-### 2. No Railway
 1. New Project → Deploy from GitHub
-2. Selecione seu repositório
-3. Em **Variables**, adicione:
+2. Em **Variables**, adicione:
    `SUPABASE_WEBHOOK_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook`
    `SUPABASE_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co`
-   `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key` (pegar no Dashboard Supabase > Settings > API)
+   `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key`
 
 **NÃO** defina PORT - Railway define automaticamente!
 
 ## Comportamento
 
-### ✅ O que SERÁ processado:
-- Mensagens novas recebidas após conexão
-- Mensagens enviadas por você
-- Novos grupos que você é adicionado
-- Contatos que enviam mensagem pela primeira vez
+### ✅ O que SERÁ sincronizado:
+- Todos os contatos ao conectar
+- Mensagens novas após conexão
+- Todas as mídias (imagens, áudios, vídeos)
 
-### ❌ O que NÃO será processado:
+### ❌ O que NÃO será sincronizado:
 - Histórico de conversas antigas
-- Mensagens anteriores à conexão
-- Grupos antigos (só aparecem quando houver nova mensagem)

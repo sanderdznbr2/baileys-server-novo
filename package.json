@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "3.6.0",
-  "description": "Servidor Baileys SEM histórico - apenas mensagens em tempo real",
+  "version": "3.7.0",
+  "description": "Servidor Baileys estável - tempo real + contatos + mídia completa",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
