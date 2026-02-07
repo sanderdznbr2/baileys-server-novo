@@ -1,13 +1,13 @@
-# 🚀 Baileys Server v3.1.0 - Suporte a Mídias e Grupos
+# 🚀 Baileys Server v3.2.0 - Grupos e Mídias
 
-## ✅ Novidades v3.1.0
+## ✅ Novidades v3.2.0
 
-### Mudanças v3.1.0:
-- ✅ **Suporte Completo a Grupos** - Identifica quem enviou cada mensagem
+### Mudanças v3.2.0:
+- ✅ **Nome do Grupo Correto** - Busca metadados do grupo para exibir nome real
+- ✅ **Identificação de Remetentes** - Mostra quem enviou cada mensagem nos grupos
 - ✅ **Suporte a Mídias** - Imagens, vídeos, áudios, documentos e stickers
 - ✅ **Upload para Supabase Storage** - Mídias são salvas no bucket whatsapp-media
 - ✅ **Retry em Downloads** - 3 tentativas para download de mídias
-- ✅ **Melhor Identificação de Contatos** - Nome e telefone do remetente em grupos
 
 ### Tipos de Mídia Suportados:
 | Tipo | Extensão | Descrição |

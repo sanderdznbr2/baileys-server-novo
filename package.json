@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "3.1.0",
-  "description": "Servidor Baileys com suporte a mídia para WhatsApp CRM",
+  "version": "3.2.0",
+  "description": "Servidor Baileys com suporte a mídia e grupos para WhatsApp CRM",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
