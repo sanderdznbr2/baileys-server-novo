@@ -1,13 +1,14 @@
 /**
  * ============================================
- * BAILEYS SERVER v3.8.0
+ * BAILEYS SERVER v4.1.0
  * ============================================
- * Servidor WhatsApp estável e completo
- * - CORREÇÃO: Endpoint /api/message/send funcional
- * - Heartbeat automático (25s)
- * - Reconexão com backoff exponencial
- * - Sincronização completa de contatos
- * - Upload de mídia com retry inteligente
+ * Servidor WhatsApp com metadados completos
+ * - Foto de perfil de GRUPOS
+ * - Descrição do grupo
+ * - Lista de participantes com roles
+ * - Status/bio dos contatos
+ * - Reidratação de 1h ao reconectar
+ * - Preservação de dados existentes
  * Para WhatsApp CRM - Lovable
  * ============================================
  */
@@ -297,7 +298,7 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret, rec
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '3.8.0', features: { contactsSync: true, mediaUpload: !!supabase, heartbeat: true }, sessions: sessions.size, timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: '4.1.0', features: { contactsSync: true, mediaUpload: !!supabase, heartbeat: true, groupMetadata: true, contactStatus: true }, sessions: sessions.size, timestamp: new Date().toISOString() });
 });
 
 app.post('/api/instance/create', async (req, res) => {
