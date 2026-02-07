@@ -1,20 +1,20 @@
-# 🚀 Baileys Server v2.9.5 - Sincronização de Histórico
+# 🚀 Baileys Server v2.9.6 - Sync Completo com Fotos
 
-## ✅ Correções v2.9.5
+## ✅ Correções v2.9.6
 
-Esta versão adiciona **sincronização completa de histórico** de conversas e contatos.
+Esta versão adiciona **sincronização de fotos de perfil** e **conversas recentes**.
 
-### Mudanças v2.9.5:
-- ✅ **Sync de histórico completo** - syncFullHistory: true
-- ✅ **Handler chats.upsert** - Sincroniza lista de chats
-- ✅ **Handler chats.set** - Recebe histórico completo  
-- ✅ **Handler contacts.upsert** - Sincroniza contatos
-- ✅ **Suporte ao formato @lid** - Novo formato do WhatsApp
+### Mudanças v2.9.6:
+- ✅ **Busca foto de perfil** - profilePictureUrl para cada contato
+- ✅ **Conversas com fotos** - Envia foto junto com chat
+- ✅ **Histórico de mensagens** - messages.set + messaging-history.set
+- ✅ **Nome do contato** - pushName/notify corretos
+- ✅ **Endpoint /sync-profile-pics** - Força busca de fotos
 
 ### Histórico de versões:
+- v2.9.5: Sync de histórico completo
 - v2.9.4: Fix QR Lock bloqueando 515
 - v2.9.3: Reconexão imediata no 515
-- v2.9.2: QR Lock 60s
 
 ## Deploy no Railway
 
@@ -37,5 +37,5 @@ Após conectar, você verá:
 ```
 [CONNECTED] ✅ WhatsApp conectado!
 [CHATS] 📥 50 chats sincronizados!
-[CONTACTS] 📥 100 contatos sincronizados!
+[PROFILE PIC] 📸 Buscando fotos de perfil...
 ```
