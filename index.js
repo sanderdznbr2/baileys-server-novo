@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.9.0 iniciando...');
+console.log('[INIT] 🚀 Baileys Server v2.9.1 iniciando...');
 console.log('[INIT] 📦 Baileys 7.0.0-rc.9 (ESM)');
 console.log('[INIT] 🖥️ Browser: Browsers.macOS("Desktop")');
 console.log('[INIT] Node version:', process.version);
