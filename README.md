@@ -1,11 +1,14 @@
-# 🚀 Baileys Server v2.5.0 para WhatsApp CRM
+# 🚀 Baileys Server v2.6.0 - VERSÃO ESTÁVEL
 
-## Novidades v2.5.0
-- ✅ Listener direto para evento 'qr' (mais confiável)
-- ✅ Logging detalhado por etapas (debug fácil)
-- ✅ Error handling robusto no auth state
-- ✅ Retry automático em desconexões rápidas
-- ✅ Até 10 tentativas de gerar QR Code
+## ⚠️ IMPORTANTE: Usa Baileys 6.5.0 (não 6.7.x)
+
+A versão 6.7.x do Baileys tem bugs conhecidos que causam desconexão 
+antes de gerar QR Code. Esta versão usa 6.5.0 que é estável.
+
+## Issues conhecidos no 6.7.x:
+- #2050: QR missing em 6.7.21
+- #2040: Desconexão automática em 6.7.20
+- #1914: Socket não gera QR
 
 ## Deploy no Railway
 
@@ -25,15 +28,19 @@ O servidor vai iniciar automaticamente.
 ## Verificação de Logs
 
 Nos logs do Railway, você deve ver:
+
 ```
-[SOCKET] Etapa 1: Preparando diretório de auth...
-[SOCKET] Etapa 2: Carregando auth state...
-[SOCKET] Etapa 3: Buscando versão do Baileys...
-[SOCKET] Etapa 4: Configurando socket...
-[SOCKET] Etapa 5: Criando socket Baileys...
-[SOCKET] Etapa 6: Registrando event listeners...
-[QR-EVENT] ⚡⚡⚡ EVENTO QR RECEBIDO DIRETAMENTE! ⚡⚡⚡
+[BAILEYS] ✓ Módulo importado
+[BAILEYS] ✓ Versão 6.5.0 detectada
+[SESSION] Criando socket...
+[QR] ✅ QR Code gerado!
 ```
 
-Se parar antes da "Etapa 5", o problema é no auth state.
-Se parar após "Etapa 5", o problema é na conexão com WhatsApp.
+## Diferença para v2.5.0
+
+| Item | v2.5.0 | v2.6.0 |
+|------|--------|--------|
+| Baileys | ^6.7.9 (bugada) | 6.5.0 (estável) |
+| Configuração | 15+ opções | 4 opções |
+| makeCacheableSignalKeyStore | Sim | Não |
+| fetchLatestBaileysVersion | Sim | Não |
