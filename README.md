@@ -1,14 +1,14 @@
-# 🚀 Baileys Server v2.6.0 - VERSÃO ESTÁVEL
+# 🚀 Baileys Server v2.7.0 - CONEXÃO CORRIGIDA
 
-## ⚠️ IMPORTANTE: Usa Baileys 6.5.0 (não 6.7.x)
+## ✅ Correções v2.7.0
 
-A versão 6.7.x do Baileys tem bugs conhecidos que causam desconexão 
-antes de gerar QR Code. Esta versão usa 6.5.0 que é estável.
+Esta versão corrige o erro 515 "Restart Required" que ocorria após escanear o QR Code.
 
-## Issues conhecidos no 6.7.x:
-- #2050: QR missing em 6.7.21
-- #2040: Desconexão automática em 6.7.20
-- #1914: Socket não gera QR
+### Mudanças:
+- ✅ Baileys ^6.7.21 (versão mais recente)
+- ✅ Browsers.appropriate("Desktop") - identificação correta
+- ✅ makeCacheableSignalKeyStore - gerenciamento de chaves
+- ✅ fetchLatestBaileysVersion - versão do protocolo
 
 ## Deploy no Railway
 
@@ -31,16 +31,16 @@ Nos logs do Railway, você deve ver:
 
 ```
 [BAILEYS] ✓ Módulo importado
-[BAILEYS] ✓ Versão 6.5.0 detectada
-[SESSION] Criando socket...
-[QR] ✅ QR Code gerado!
+[BAILEYS] ✓ Versão WA: x.x.xxxx
+[QR] 🎉 QR Code recebido!
+[CONNECTED] ✅ WhatsApp conectado!
 ```
 
-## Diferença para v2.5.0
+## Erro 515 "Restart Required"
 
-| Item | v2.5.0 | v2.6.0 |
-|------|--------|--------|
-| Baileys | ^6.7.9 (bugada) | 6.5.0 (estável) |
-| Configuração | 15+ opções | 4 opções |
-| makeCacheableSignalKeyStore | Sim | Não |
-| fetchLatestBaileysVersion | Sim | Não |
+Este erro ocorria porque:
+1. Faltava identificação de browser adequada
+2. Faltava makeCacheableSignalKeyStore
+3. Versão do protocolo incorreta
+
+A v2.7.0 corrige todos esses problemas.

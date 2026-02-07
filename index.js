@@ -4,14 +4,14 @@ const fs = require('fs');
 const path = require('path');
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.6.0 iniciando...');
-console.log('[INIT] ⚠️  Usando Baileys 6.5.0 (versão estável)');
+console.log('[INIT] 🚀 Baileys Server v2.7.0 iniciando...');
+console.log('[INIT] ✅ Correção do erro 515 após scan do QR');
 console.log('[INIT] Node version:', process.version);
 console.log('[INIT] Platform:', process.platform);
 console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(60));
 
-const VERSION = "v2.6.0";
+const VERSION = "v2.7.0";
 const app = express();
 
 app.use(cors());
@@ -39,6 +39,9 @@ const sessions = new Map();
 let makeWASocket = null;
 let useMultiFileAuthState = null;
 let DisconnectReason = null;
+let makeCacheableSignalKeyStore = null;
+let fetchLatestBaileysVersion = null;
+let Browsers = null;
 let QRCode = null;
 let pino = null;
 let baileysLoaded = false;
@@ -63,7 +66,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ============ CRIAR SOCKET (v2.6.0 - SIMPLIFICADO) ============
+// ============ CRIAR SOCKET (v2.7.0 - CONFIGURAÇÃO COMPLETA) ============
 async function createSocketForSession(session) {
   const { sessionId, instanceName } = session;
   const sessionPath = path.join(SESSIONS_DIR, sessionId);
@@ -111,17 +114,42 @@ async function createSocketForSession(session) {
     throw e;
   }
   
-  // ========== CRIAR SOCKET - CONFIGURAÇÃO MÍNIMA ==========
-  console.log('[SOCKET] Criando socket com config MÍNIMA...');
+  // Buscar versão do WhatsApp
+  console.log('[SOCKET] Buscando versão do WA...');
+  let version;
+  try {
+    const versionResult = await fetchLatestBaileysVersion();
+    version = versionResult.version;
+    console.log(`[SOCKET] ✓ Versão WA: ${version.join('.')}`);
+  } catch (e) {
+    console.log('[SOCKET] ⚠ Erro ao buscar versão, usando fallback');
+    version = [2, 3000, 1015901307];
+  }
+  
+  // ========== CRIAR SOCKET - CONFIGURAÇÃO COMPLETA ==========
+  console.log('[SOCKET] Criando socket com config COMPLETA...');
   
   const logger = pino({ level: 'silent' });
   
-  // APENAS 3 OPÇÕES - Isso é o que funciona no 6.5.0
-  const sock = makeWASocket({
+  // CONFIGURAÇÃO CORRETA para evitar erro 515
+  const socketConfig = {
+    version,
+    logger,
     printQRInTerminal: true,
-    auth: state,
-    logger: logger
-  });
+    browser: Browsers.appropriate('Desktop'),
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
+    },
+    syncFullHistory: false,
+    markOnlineOnConnect: true,
+    generateHighQualityLinkPreview: false,
+    getMessage: async () => undefined
+  };
+  
+  console.log('[SOCKET] Browser:', socketConfig.browser);
+  
+  const sock = makeWASocket(socketConfig);
   
   session.socket = sock;
   session.socketCreatedAt = Date.now();
@@ -228,7 +256,27 @@ async function createSocketForSession(session) {
         return;
       }
       
-      // Tentar reconectar
+      // Erro 515 = Restart Required - reconectar
+      if (statusCode === 515) {
+        console.log('[515] Restart Required - reconectando...');
+        session.retryCount++;
+        if (session.retryCount < MAX_RETRIES) {
+          session.status = 'reconnecting';
+          setTimeout(async () => {
+            try {
+              await createSocketForSession(session);
+            } catch (err) {
+              console.error('[515] Erro ao reconectar:', err.message);
+              session.status = 'failed';
+            }
+          }, 3000);
+        } else {
+          session.status = 'failed';
+        }
+        return;
+      }
+      
+      // Tentar reconectar para outros erros
       if (session.retryCount < MAX_RETRIES) {
         session.retryCount++;
         session.status = 'reconnecting';
@@ -327,7 +375,6 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     version: VERSION,
-    baileys: '6.5.0',
     sessions: sessions.size,
     baileysLoaded,
     timestamp: new Date().toISOString()
@@ -352,7 +399,6 @@ app.post('/api/instance/create', async (req, res) => {
     res.json({
       success: true,
       version: VERSION,
-      baileys: '6.5.0',
       sessionId: session.sessionId,
       instanceName: session.instanceName,
       isConnected: session.isConnected,
@@ -501,16 +547,16 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(60));
   console.log(`🚀 [${VERSION}] Servidor HTTP na porta ${PORT}`);
   console.log(`📡 Webhook: ${WEBHOOK_URL || 'Não configurada'}`);
-  console.log(`📦 Baileys: 6.5.0 (versão estável)`);
+  console.log(`📦 Baileys: ^6.7.21 (com config completa)`);
   console.log('='.repeat(60));
   console.log('');
   loadBaileys();
 });
 
-// ============ CARREGAR BAILEYS 6.5.0 ============
+// ============ CARREGAR BAILEYS ==========
 async function loadBaileys() {
   console.log('[BAILEYS] ========================================');
-  console.log('[BAILEYS] Carregando Baileys 6.5.0...');
+  console.log('[BAILEYS] Carregando Baileys ^6.7.21...');
   console.log('[BAILEYS] ========================================');
   
   try {
@@ -520,10 +566,10 @@ async function loadBaileys() {
     pino = require('pino');
     console.log('[BAILEYS] ✓ pino');
     
-    console.log('[BAILEYS] Importando @whiskeysockets/baileys 6.5.0...');
+    console.log('[BAILEYS] Importando @whiskeysockets/baileys...');
     const baileys = await import('@whiskeysockets/baileys');
     
-    // Baileys 6.5.0 tem estrutura diferente
+    // Detectar exports
     if (typeof baileys.default === 'function') {
       makeWASocket = baileys.default;
       console.log('[BAILEYS] ✓ makeWASocket via default');
@@ -535,29 +581,31 @@ async function loadBaileys() {
       console.log('[BAILEYS] ✓ makeWASocket via named export');
     } else {
       console.log('[BAILEYS] Exports disponíveis:', Object.keys(baileys));
-      console.log('[BAILEYS] Default type:', typeof baileys.default);
-      if (baileys.default) {
-        console.log('[BAILEYS] Default keys:', Object.keys(baileys.default));
-      }
       throw new Error('makeWASocket não encontrado');
     }
     
     // Funções auxiliares
     useMultiFileAuthState = baileys.useMultiFileAuthState || baileys.default?.useMultiFileAuthState;
     DisconnectReason = baileys.DisconnectReason || baileys.default?.DisconnectReason;
+    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore || baileys.default?.makeCacheableSignalKeyStore;
+    fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion || baileys.default?.fetchLatestBaileysVersion;
+    Browsers = baileys.Browsers || baileys.default?.Browsers;
     
     console.log('[BAILEYS] ✓ useMultiFileAuthState:', typeof useMultiFileAuthState);
+    console.log('[BAILEYS] ✓ makeCacheableSignalKeyStore:', typeof makeCacheableSignalKeyStore);
+    console.log('[BAILEYS] ✓ fetchLatestBaileysVersion:', typeof fetchLatestBaileysVersion);
+    console.log('[BAILEYS] ✓ Browsers:', typeof Browsers);
     console.log('[BAILEYS] ✓ DisconnectReason:', typeof DisconnectReason);
     
-    if (!useMultiFileAuthState) {
-      throw new Error('useMultiFileAuthState não encontrado');
+    if (!useMultiFileAuthState || !makeCacheableSignalKeyStore || !Browsers) {
+      throw new Error('Funções auxiliares não encontradas');
     }
     
     baileysLoaded = true;
     
     console.log('');
     console.log('[BAILEYS] ========================================');
-    console.log('[BAILEYS] ✅ BAILEYS 6.5.0 PRONTO!');
+    console.log('[BAILEYS] ✅ BAILEYS PRONTO!');
     console.log('[BAILEYS] ========================================');
     console.log('');
   } catch (err) {
