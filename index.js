@@ -9,13 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.9.3 iniciando...');
+console.log('[INIT] 🚀 Baileys Server v2.9.4 iniciando...');
 console.log('[INIT] 📦 Baileys 7.0.0-rc.9 (ESM)');
-console.log('[INIT] 🔧 Fix: Erro 515 após QR scan');
+console.log('[INIT] 🔧 Fix: QR Lock bloqueando reconexão 515');
 console.log('[INIT] Node version:', process.version);
 console.log('='.repeat(60));
 
-const VERSION = "v2.9.3";
+const VERSION = "v2.9.4";
 const app = express();
 
 app.use(cors());
@@ -143,8 +143,8 @@ async function createSocketForSession(session) {
   // Aguardar antes de criar socket
   await sleep(1000);
   
-  // ========== CRIAR SOCKET - v2.9.2 Config ==========
-  console.log('[SOCKET] Criando socket com config v2.9.2...');
+  // ========== CRIAR SOCKET - v2.9.4 Config ==========
+  console.log('[SOCKET] Criando socket com config v2.9.4...');
   
   const logger = pino({ level: 'silent' });
   
@@ -262,20 +262,9 @@ async function createSocketForSession(session) {
         data: { connection: 'close', isConnected: false, statusCode }
       });
       
-      // ===== CHECK QR LOCK ANTES DE RECONECTAR =====
-      if (session.qrGeneratedAt) {
-        const timeSinceQR = Date.now() - session.qrGeneratedAt;
-        if (timeSinceQR < QR_LOCK_TIME_MS) {
-          const remaining = Math.ceil((QR_LOCK_TIME_MS - timeSinceQR) / 1000);
-          console.log(`[QR LOCK] ⏳ QR ativo, NÃO reconectando (aguarde ${remaining}s)`);
-          console.log('[QR LOCK] Usuário pode estar escaneando o QR');
-          return;  // NÃO reconectar
-        }
-      }
-      
-      // Logout = não reconectar
+      // ===== 1. CHECK LOGOUT (401) - PRIORIDADE MÁXIMA =====
       if (statusCode === DisconnectReason?.loggedOut) {
-        console.log('[LOGOUT] Usuário fez logout');
+        console.log('[LOGOUT] Usuário fez logout, removendo sessão');
         session.status = 'logged_out';
         sessions.delete(sessionId);
         try {
@@ -284,19 +273,26 @@ async function createSocketForSession(session) {
         return;
       }
       
-      // ===== ERRO 515 - COMPORTAMENTO ESPERADO APÓS QR SCAN =====
-      // WhatsApp envia 515 para forçar reconexão após pareamento bem-sucedido
-      // A reconexão deve ser IMEDIATA (1s) pois as credenciais já foram salvas
-      if (statusCode === 515) {
+      // ===== 2. CHECK 515 - PRIORIDADE SOBRE QR LOCK! =====
+      // O erro 515 (restartRequired) é ESPERADO após escanear o QR
+      // WhatsApp pede reconexão após pareamento bem-sucedido
+      // DEVE vir ANTES do QR Lock check para não ser bloqueado!
+      if (statusCode === 515 || statusCode === DisconnectReason?.restartRequired) {
         console.log('');
-        console.log('[515] ⚡ Stream Error - Reconexão IMEDIATA');
-        console.log('[515] Isso é NORMAL após escanear o QR');
-        console.log('[515] Credenciais foram salvas, reconectando...');
+        console.log('[515] ═══════════════════════════════════════════════════');
+        console.log('[515] ⚡ PAREAMENTO DETECTADO - Reconexão IMEDIATA');
+        console.log('[515] Isso é NORMAL! WhatsApp pede restart após QR scan');
+        console.log('[515] Credenciais JÁ FORAM SALVAS pelo pareamento');
+        console.log('[515] ═══════════════════════════════════════════════════');
         console.log('');
         
-        // IMPORTANTE: NÃO limpar auth, NÃO incrementar retry
-        // As credenciais já foram salvas pelo pareamento
+        // IMPORTANTE: Limpar QR Lock pois pareamento foi bem-sucedido
+        session.qrGeneratedAt = null;
+        session.qrCode = null;
         session.status = 'reconnecting_after_pair';
+        
+        // NÃO incrementar retry - isso não é um erro real
+        // NÃO limpar auth - credenciais já foram salvas
         
         // Fechar socket atual
         if (session.socket) {
@@ -304,21 +300,34 @@ async function createSocketForSession(session) {
           session.socket = null;
         }
         
-        // Reconectar IMEDIATAMENTE (1s apenas para limpar socket)
+        // Reconectar IMEDIATAMENTE (1s para dar tempo de limpar socket)
         setTimeout(async () => {
           try {
-            console.log('[515] Iniciando reconexão...');
+            console.log('[515] 🔄 Iniciando reconexão com credenciais salvas...');
             await createSocketForSession(session);
           } catch (err) {
-            console.error('[515] Erro na reconexão:', err.message);
+            console.error('[515] ❌ Erro na reconexão:', err.message);
             session.status = 'failed';
           }
-        }, 1000);  // 1s - reconexão imediata!
+        }, 1000);
         
         return;
       }
       
-      // Erro 405/408 = Timeout/Method Not Allowed
+      // ===== 3. CHECK QR LOCK - Apenas para outros erros =====
+      // Este check impede reconexões enquanto usuário escaneia
+      // MAS não deve bloquear o 515 (já tratado acima)
+      if (session.qrGeneratedAt) {
+        const timeSinceQR = Date.now() - session.qrGeneratedAt;
+        if (timeSinceQR < QR_LOCK_TIME_MS) {
+          const remaining = Math.ceil((QR_LOCK_TIME_MS - timeSinceQR) / 1000);
+          console.log(`[QR LOCK] ⏳ QR ativo, NÃO reconectando (aguarde ${remaining}s)`);
+          console.log('[QR LOCK] Usuário pode estar escaneando o QR');
+          return;
+        }
+      }
+      
+      // ===== 4. ERROS 405/408 - Protocolo =====
       if (statusCode === 405 || statusCode === 408) {
         console.log(`[${statusCode}] Erro de protocolo`);
         session.retryCount++;
@@ -342,13 +351,11 @@ async function createSocketForSession(session) {
         return;
       }
       
-      // Outros erros - reconectar com delay maior
+      // ===== 5. OUTROS ERROS =====
       if (session.retryCount < MAX_RETRIES) {
         session.retryCount++;
         session.status = 'reconnecting';
-        
         console.log(`[RETRY] Tentativa ${session.retryCount}/${MAX_RETRIES} em ${RETRY_DELAY_MS/1000}s...`);
-        
         setTimeout(async () => {
           try {
             await createSocketForSession(session);

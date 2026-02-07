@@ -1,23 +1,23 @@
-# 🚀 Baileys Server v2.9.3 - Fix Erro 515 Após QR Scan
+# 🚀 Baileys Server v2.9.4 - Fix QR Lock Bloqueando 515
 
-## ✅ Correções v2.9.3
+## ✅ Correções v2.9.4
 
-Esta versão corrige o erro **"Não foi possível conectar o dispositivo"** após escanear o QR.
+Esta versão corrige o bug onde o **QR Lock bloqueava a reconexão após pareamento**.
 
-### Mudanças v2.9.3:
-- ✅ **Reconexão IMEDIATA no 515** - 1s ao invés de 15s (CRÍTICO!)
-- ✅ **Preserva credenciais no 515** - Não limpa auth após pareamento
-- ✅ **Status específico** - `reconnecting_after_pair` para debug
+### Mudanças v2.9.4:
+- ✅ **515 tem PRIORIDADE sobre QR Lock** - Handler 515 vem ANTES do check QR Lock
+- ✅ **Limpa QR Lock no 515** - Quando pareamento detectado, remove o lock
+- ✅ **Reconexão em 1s** - Imediata após detectar pareamento
 
 ### Por que funciona:
-O erro 515 é **ESPERADO** após escanear o QR - é o WhatsApp pedindo reconexão.
-A v2.9.2 esperava 15s e limpava auth, causando timeout no celular.
-A v2.9.3 reconecta em 1s, permitindo conexão bem-sucedida.
+O bug na v2.9.3: QR Lock check vinha ANTES do handler 515.
+Como o QR foi gerado há menos de 60s quando escaneia, o código fazia return e NUNCA chegava ao handler 515.
+Na v2.9.4: Handler 515 vem PRIMEIRO e limpa o QR Lock.
 
-### Versões Anteriores:
-- ✅ **QR Lock 60s** - Impede regeneração enquanto escaneia
-- ✅ **Node.js 20** (obrigatório para Baileys 7.x)
-- ✅ **Baileys 7.0.0-rc.9** (versão mais recente)
+### Histórico:
+- v2.9.2: QR Lock 60s (impede regeneração)
+- v2.9.3: Reconexão 515 em 1s (mas bloqueada pelo QR Lock)
+- **v2.9.4: 515 tem prioridade sobre QR Lock** ✅
 
 ## Deploy no Railway
 
@@ -39,9 +39,11 @@ Após escanear o QR, você verá:
 
 ```
 [QR] 🎉 QR Code recebido!
+[QR] 🔒 QR Lock ativo por 60s
 ... (usuário escaneia)
-[515] ⚡ Stream Error - Reconexão IMEDIATA
-[515] Isso é NORMAL após escanear o QR
-[515] Iniciando reconexão...
+[DISCONNECTED] Código: 515
+[515] ⚡ PAREAMENTO DETECTADO - Reconexão IMEDIATA
+[515] Isso é NORMAL! WhatsApp pede restart após QR scan
+[515] 🔄 Iniciando reconexão com credenciais salvas...
 [CONNECTED] ✅ WhatsApp conectado!
 ```
