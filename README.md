@@ -1,13 +1,16 @@
-# 🚀 Baileys Server v3.2.0 - Grupos e Mídias
+# 🚀 Baileys Server v3.3.0 - Sync Completo
 
-## ✅ Novidades v3.2.0
+## ✅ Novidades v3.3.0
 
-### Mudanças v3.2.0:
+### Principais Mudanças:
+- ✅ **SYNC COMPLETO DE HISTÓRICO** - Sincroniza todas as conversas ao conectar
+- ✅ **Handler messaging-history.set** - Recebe mensagens históricas
+- ✅ **Handler chats.set** - Recebe lista de chats inicial
+- ✅ **Processamento em batches** - Evita timeout com muitos dados
 - ✅ **Nome do Grupo Correto** - Busca metadados do grupo para exibir nome real
 - ✅ **Identificação de Remetentes** - Mostra quem enviou cada mensagem nos grupos
 - ✅ **Suporte a Mídias** - Imagens, vídeos, áudios, documentos e stickers
 - ✅ **Upload para Supabase Storage** - Mídias são salvas no bucket whatsapp-media
-- ✅ **Retry em Downloads** - 3 tentativas para download de mídias
 
 ### Tipos de Mídia Suportados:
 | Tipo | Extensão | Descrição |
@@ -23,6 +26,7 @@
 
 ### 1. Suba para o GitHub
 - Substitua **TODOS** os arquivos (especialmente index.js!)
+- Delete a pasta `sessions/` se existir
 
 ### 2. No Railway
 1. New Project → Deploy from GitHub
@@ -43,11 +47,18 @@ Após conectar, você verá:
 
 ```
 ============================================
-🚀 Baileys Server v3.1.0 running on port XXXX
+🚀 Baileys Server v3.3.0 running on port XXXX
 ============================================
 📡 Webhook URL: https://...
 📸 Media Support: ✅ Enabled
+📜 History Sync: ✅ Enabled
 ============================================
+```
+
+E ao conectar um WhatsApp:
+```
+📋 [CHATS.SET] Syncing X chats...
+📜 [HISTORY SYNC] X chats, Y messages
 ```
 
 ## Endpoints da API

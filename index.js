@@ -1,8 +1,9 @@
 /**
  * ============================================
- * BAILEYS SERVER v3.1.0
+ * BAILEYS SERVER v3.3.0
  * ============================================
- * Servidor completo com suporte a mídias e grupos
+ * Servidor completo com suporte a mídias, grupos
+ * e SINCRONIZAÇÃO COMPLETA de histórico
  * Para WhatsApp CRM - Lovable
  * ============================================
  */
@@ -310,7 +311,9 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
     },
     browser: Browsers.macOS('Desktop'),
     connectTimeoutMs: 60000,
-    qrTimeout: 60000
+    qrTimeout: 60000,
+    // Enable history sync
+    syncFullHistory: true
   });
 
   session.socket = socket;
@@ -398,9 +401,13 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
     }
   });
 
-  // ============== INCOMING MESSAGES ==============
+  // ============== INCOMING MESSAGES (Real-time + History) ==============
   socket.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    // Process both 'notify' (real-time) and 'append' (history) messages
+    // Skip only 'prepend' to avoid duplicates
+    if (type === 'prepend') return;
+    
+    console.log(`📨 Processing ${messages.length} messages (type: ${type})`);
 
     for (const msg of messages) {
       // Skip status broadcast
@@ -440,13 +447,13 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
         senderName = msg.pushName || '';
       }
 
-      // Process media
+      // Process media only for real-time messages (to avoid downloading old media)
       let mediaUrl = null;
       let mediaMimeType = null;
       let mediaType = null;
       let mediaCaption = getMediaCaption(msg);
 
-      if (hasMedia(msg)) {
+      if (type === 'notify' && hasMedia(msg)) {
         console.log(`📨 Media message from ${remoteJid}`);
         const mediaResult = await processMediaMessage(socket, msg, sessionId);
         if (mediaResult) {
@@ -454,16 +461,26 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
           mediaMimeType = mediaResult.mediaMimeType || null;
           mediaType = mediaResult.mediaType || null;
         }
+      } else if (hasMedia(msg)) {
+        // For history messages, just indicate media type without downloading
+        const message = msg.message;
+        if (message?.imageMessage) mediaType = 'image';
+        else if (message?.videoMessage) mediaType = 'video';
+        else if (message?.audioMessage) mediaType = message.audioMessage.ptt ? 'ptt' : 'audio';
+        else if (message?.documentMessage) mediaType = 'document';
+        else if (message?.stickerMessage) mediaType = 'sticker';
       } else {
         const textContent = msg.message?.conversation || 
                           msg.message?.extendedTextMessage?.text || 
                           '';
-        console.log(`📨 Text message from ${remoteJid}: ${textContent.substring(0, 50)}...`);
+        if (textContent) {
+          console.log(`📨 Text message from ${remoteJid}: ${textContent.substring(0, 50)}...`);
+        }
       }
 
       // Get sender profile picture (only for non-group individual messages)
       let senderProfilePic = null;
-      if (!isGroup) {
+      if (!isGroup && type === 'notify') {
         try {
           senderProfilePic = await socket.profilePictureUrl(remoteJid, 'image');
         } catch (e) {
@@ -495,7 +512,9 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
             mediaType,
             mediaCaption,
             // Profile
-            senderProfilePic
+            senderProfilePic,
+            // Sync type indicator
+            syncType: type
           }]
         }
       });
@@ -513,16 +532,129 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
     });
   });
 
-  // Chats sync (on connect)
+  // ============== CHAT SYNC (Initial connection) ==============
   socket.ev.on('chats.set', async ({ chats }) => {
-    console.log(`📋 Syncing ${chats.length} chats...`);
+    console.log(`📋 [CHATS.SET] Syncing ${chats.length} chats...`);
+    
+    // Process in batches to avoid timeout
+    const batchSize = 50;
+    for (let i = 0; i < chats.length; i += batchSize) {
+      const batch = chats.slice(i, i + batchSize);
+      console.log(`📋 Sending batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(chats.length/batchSize)}`);
+      
+      await sendWebhook({
+        event: 'chats.set',
+        sessionId,
+        instanceName,
+        webhookSecret,
+        data: { 
+          chats: batch,
+          batchInfo: {
+            current: Math.floor(i/batchSize) + 1,
+            total: Math.ceil(chats.length/batchSize),
+            totalChats: chats.length
+          }
+        }
+      });
+    }
+    
+    console.log(`✅ [CHATS.SET] Finished syncing ${chats.length} chats`);
+  });
+
+  // ============== CHAT UPSERT (New chats during session) ==============
+  socket.ev.on('chats.upsert', async (chats) => {
+    console.log(`📋 [CHATS.UPSERT] ${chats.length} new chats`);
     await sendWebhook({
-      event: 'chats.set',
+      event: 'chats.upsert',
       sessionId,
       instanceName,
       webhookSecret,
       data: { chats }
     });
+  });
+
+  // ============== MESSAGE HISTORY SYNC ==============
+  socket.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
+    console.log(`📜 [HISTORY SYNC] ${chats?.length || 0} chats, ${messages?.length || 0} messages, isLatest: ${isLatest}`);
+    
+    // Send chats if available
+    if (chats && chats.length > 0) {
+      const batchSize = 50;
+      for (let i = 0; i < chats.length; i += batchSize) {
+        const batch = chats.slice(i, i + batchSize);
+        await sendWebhook({
+          event: 'chats.set',
+          sessionId,
+          instanceName,
+          webhookSecret,
+          data: { 
+            chats: batch,
+            isHistorySync: true
+          }
+        });
+      }
+    }
+    
+    // Send messages if available (in batches)
+    if (messages && messages.length > 0) {
+      console.log(`📜 Processing ${messages.length} history messages...`);
+      const batchSize = 100;
+      for (let i = 0; i < messages.length; i += batchSize) {
+        const batch = messages.slice(i, i + batchSize);
+        console.log(`📜 Sending message batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(messages.length/batchSize)}`);
+        
+        // Process each message in the batch
+        for (const msg of batch) {
+          const remoteJid = msg.key?.remoteJid;
+          if (!remoteJid || remoteJid === 'status@broadcast') continue;
+          
+          const isGroup = isGroupJid(remoteJid);
+          let groupName = '';
+          let senderPhone = '';
+          let senderName = '';
+          
+          if (isGroup && !msg.key?.fromMe) {
+            const participantJid = msg.key?.participant;
+            if (participantJid) {
+              senderPhone = extractPhoneFromJid(participantJid) || '';
+              senderName = msg.pushName || '';
+            }
+          }
+          
+          // Detect media type without downloading
+          let mediaType = null;
+          const message = msg.message;
+          if (message?.imageMessage) mediaType = 'image';
+          else if (message?.videoMessage) mediaType = 'video';
+          else if (message?.audioMessage) mediaType = message.audioMessage.ptt ? 'ptt' : 'audio';
+          else if (message?.documentMessage) mediaType = 'document';
+          else if (message?.stickerMessage) mediaType = 'sticker';
+          
+          await sendWebhook({
+            event: 'messages.upsert',
+            sessionId,
+            instanceName,
+            webhookSecret,
+            data: {
+              messages: [{
+                key: msg.key,
+                message: msg.message,
+                messageTimestamp: msg.messageTimestamp,
+                pushName: msg.pushName,
+                groupName,
+                isGroup,
+                senderPhone,
+                senderName,
+                mediaType,
+                syncType: 'history'
+              }]
+            }
+          });
+        }
+      }
+    }
+    
+    console.log(`✅ [HISTORY SYNC] Complete`);
   });
 
   // Contacts sync
@@ -545,7 +677,7 @@ async function createWhatsAppSession(sessionId, instanceName, webhookSecret) {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '3.2.0',
+    version: '3.3.0',
     sessions: sessions.size,
     mediaSupport: !!(SUPABASE_URL && SUPABASE_SERVICE_KEY),
     timestamp: new Date().toISOString()
@@ -730,7 +862,7 @@ app.post('/api/message/send-media', async (req, res) => {
 // ============== START SERVER ==============
 
 async function startServer() {
-  console.log('🚀 Starting Baileys Server v3.1.0...');
+  console.log('🚀 Starting Baileys Server v3.3.0...');
   
   // Dynamic imports for ESM modules
   const baileysModule = await import('@whiskeysockets/baileys');
@@ -760,10 +892,11 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log('');
     console.log('============================================');
-    console.log(`🚀 Baileys Server v3.1.0 running on port ${PORT}`);
+    console.log(`🚀 Baileys Server v3.3.0 running on port ${PORT}`);
     console.log('============================================');
     console.log(`📡 Webhook URL: ${WEBHOOK_URL || 'Not configured'}`);
     console.log(`📸 Media Support: ${supabase ? '✅ Enabled' : '❌ Disabled'}`);
+    console.log('📜 History Sync: ✅ Enabled');
     console.log('============================================');
     console.log('');
   });
