@@ -9,7 +9,7 @@ console.log('[INIT] Node version:', process.version);
 console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(50));
 
-const VERSION = "v2.0.0";
+const VERSION = "v2.1.0";
 const app = express();
 
 app.use(cors());
@@ -33,9 +33,14 @@ try {
 
 // ============ VARIÁVEIS GLOBAIS ============
 const sessions = new Map();
-let baileys = null;
+let makeWASocket = null;
+let useMultiFileAuthState = null;
+let DisconnectReason = null;
+let makeCacheableSignalKeyStore = null;
+let fetchLatestBaileysVersion = null;
 let QRCode = null;
 let pino = null;
+let baileysLoaded = false;
 
 // ============ WEBHOOK ============
 async function sendWebhook(payload) {
@@ -54,18 +59,18 @@ async function sendWebhook(payload) {
 
 // ============ CRIAR SESSÃO WHATSAPP ============
 async function createSession(sessionId, instanceName, webhookSecret) {
-  if (!baileys) {
-    throw new Error('Baileys não carregado ainda');
+  if (!baileysLoaded) {
+    throw new Error('Baileys ainda não carregado, aguarde alguns segundos');
   }
   
   if (sessions.has(sessionId)) {
-    console.log(`[SESSION] ${instanceName} já existe`);
+    console.log(`[SESSION] ${sessionId} já existe`);
     return sessions.get(sessionId);
   }
 
-  const sessionPath = path.join(SESSIONS_DIR, instanceName);
-  const { state, saveCreds } = await baileys.useMultiFileAuthState(sessionPath);
-  const { version } = await baileys.fetchLatestBaileysVersion();
+  const sessionPath = path.join(SESSIONS_DIR, sessionId);
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+  const { version } = await fetchLatestBaileysVersion();
   
   console.log(`[SESSION] Criando ${instanceName} (Baileys v${version.join('.')})`);
 
@@ -84,15 +89,16 @@ async function createSession(sessionId, instanceName, webhookSecret) {
 
   const logger = pino({ level: 'silent' });
   
-  const socket = baileys.default({
+  // CORREÇÃO: Usar makeWASocket diretamente (não é .default)
+  const socket = makeWASocket({
     version,
     logger,
     printQRInTerminal: true,
     auth: {
       creds: state.creds,
-      keys: baileys.makeCacheableSignalKeyStore(state.keys, logger)
+      keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
-    browser: ['Lovable CRM', 'Chrome', '120.0.0']
+    browser: ['Ellosuit CRM', 'Chrome', '120.0.0']
   });
 
   session.socket = socket;
@@ -132,8 +138,8 @@ async function createSession(sessionId, instanceName, webhookSecret) {
     if (connection === 'close') {
       session.isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = statusCode !== baileys.DisconnectReason?.loggedOut;
-      console.log(`[DISCONNECTED] ${instanceName} - Reconnect: ${shouldReconnect}`);
+      const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
+      console.log(`[DISCONNECTED] ${instanceName} - Code: ${statusCode}, Reconnect: ${shouldReconnect}`);
       await sendWebhook({
         event: 'connection.update',
         sessionId,
@@ -186,7 +192,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok', 
     version: VERSION, 
     sessions: sessions.size, 
-    baileysLoaded: !!baileys,
+    baileysLoaded,
     timestamp: new Date().toISOString() 
   });
 });
@@ -194,8 +200,8 @@ app.get('/api/health', (req, res) => {
 // Criar instância
 app.post('/api/instance/create', async (req, res) => {
   try {
-    if (!baileys) {
-      return res.status(503).json({ error: 'Baileys ainda carregando, aguarde...' });
+    if (!baileysLoaded) {
+      return res.status(503).json({ error: 'Baileys ainda carregando, aguarde alguns segundos...' });
     }
     const { sessionId, instanceName, webhookSecret } = req.body;
     if (!sessionId || !instanceName) {
@@ -247,7 +253,7 @@ app.delete('/api/instance/:sessionId', async (req, res) => {
   } catch (e) {
     console.log('[LOGOUT] Erro:', e.message);
   }
-  const sessionPath = path.join(SESSIONS_DIR, session.instanceName);
+  const sessionPath = path.join(SESSIONS_DIR, session.sessionId);
   if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true });
   sessions.delete(req.params.sessionId);
   res.json({ success: true });
@@ -288,7 +294,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 async function loadBaileys() {
   console.log('[BAILEYS] Carregando módulos...');
   try {
-    // Carregar dependências
+    // Carregar dependências síncronas primeiro
     QRCode = require('qrcode');
     console.log('[BAILEYS] qrcode carregado ✓');
     
@@ -296,8 +302,37 @@ async function loadBaileys() {
     console.log('[BAILEYS] pino carregado ✓');
     
     // Import dinâmico do Baileys (ESM)
-    baileys = await import('@whiskeysockets/baileys');
+    const baileys = await import('@whiskeysockets/baileys');
+    console.log('[BAILEYS] Módulo importado, extraindo funções...');
+    
+    // CORREÇÃO: Baileys exporta makeWASocket como default.default ou diretamente
+    // Verificar a estrutura do módulo
+    if (typeof baileys.default === 'function') {
+      makeWASocket = baileys.default;
+    } else if (baileys.default && typeof baileys.default.default === 'function') {
+      makeWASocket = baileys.default.default;
+    } else if (typeof baileys.makeWASocket === 'function') {
+      makeWASocket = baileys.makeWASocket;
+    } else {
+      // Listar o que está disponível para debug
+      console.log('[BAILEYS] Estrutura do módulo:', Object.keys(baileys));
+      console.log('[BAILEYS] Estrutura de baileys.default:', baileys.default ? Object.keys(baileys.default) : 'undefined');
+      throw new Error('Não foi possível encontrar makeWASocket no módulo');
+    }
+    
+    // Extrair outras funções necessárias
+    useMultiFileAuthState = baileys.useMultiFileAuthState || baileys.default?.useMultiFileAuthState;
+    DisconnectReason = baileys.DisconnectReason || baileys.default?.DisconnectReason;
+    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore || baileys.default?.makeCacheableSignalKeyStore;
+    fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion || baileys.default?.fetchLatestBaileysVersion;
+    
+    if (!useMultiFileAuthState || !makeCacheableSignalKeyStore || !fetchLatestBaileysVersion) {
+      throw new Error('Funções auxiliares do Baileys não encontradas');
+    }
+    
+    baileysLoaded = true;
     console.log('[BAILEYS] @whiskeysockets/baileys carregado ✓');
+    console.log('[BAILEYS] makeWASocket:', typeof makeWASocket);
     console.log('[BAILEYS] Pronto para criar sessões!');
   } catch (err) {
     console.error('[BAILEYS] ERRO ao carregar:', err.message);
