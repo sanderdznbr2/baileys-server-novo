@@ -4,14 +4,14 @@ const fs = require('fs');
 const path = require('path');
 
 console.log('='.repeat(60));
-console.log('[INIT] 🚀 Baileys Server v2.7.0 iniciando...');
-console.log('[INIT] ✅ Correção do erro 515 após scan do QR');
+console.log('[INIT] 🚀 Baileys Server v2.8.0 iniciando...');
+console.log('[INIT] ✅ Browser string FIXO (sem Browsers.appropriate)');
 console.log('[INIT] Node version:', process.version);
 console.log('[INIT] Platform:', process.platform);
 console.log('[INIT] PORT:', process.env.PORT || 3333);
 console.log('='.repeat(60));
 
-const VERSION = "v2.7.0";
+const VERSION = "v2.8.0";
 const app = express();
 
 app.use(cors());
@@ -22,6 +22,11 @@ const WEBHOOK_URL = process.env.SUPABASE_WEBHOOK_URL || '';
 const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
 const MAX_RETRIES = 3;
 
+// ========== BROWSER STRING FIXO ==========
+// Este é o browser string que funciona - NÃO usar Browsers.appropriate()
+const BROWSER = ["Chrome (Linux)", "Chrome", "130.0.6723.70"];
+
+console.log('[CONFIG] Browser string FIXO:', JSON.stringify(BROWSER));
 console.log('[CONFIG] Webhook URL:', WEBHOOK_URL ? 'Configurada ✓' : 'NÃO configurada ⚠');
 console.log('[CONFIG] Sessions dir:', SESSIONS_DIR);
 
@@ -40,8 +45,6 @@ let makeWASocket = null;
 let useMultiFileAuthState = null;
 let DisconnectReason = null;
 let makeCacheableSignalKeyStore = null;
-let fetchLatestBaileysVersion = null;
-let Browsers = null;
 let QRCode = null;
 let pino = null;
 let baileysLoaded = false;
@@ -66,7 +69,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ============ CRIAR SOCKET (v2.7.0 - CONFIGURAÇÃO COMPLETA) ============
+// ============ CRIAR SOCKET (v2.8.0 - BROWSER STRING FIXO) ============
 async function createSocketForSession(session) {
   const { sessionId, instanceName } = session;
   const sessionPath = path.join(SESSIONS_DIR, sessionId);
@@ -84,7 +87,7 @@ async function createSocketForSession(session) {
         fs.rmSync(sessionPath, { recursive: true, force: true });
         console.log('[SOCKET] ✓ Auth antiga removida');
       }
-      await sleep(2000);
+      await sleep(3000);
     } catch (e) {
       console.error('[SOCKET] ⚠ Erro ao limpar auth:', e.message);
     }
@@ -101,6 +104,9 @@ async function createSocketForSession(session) {
     throw e;
   }
   
+  // Aguardar um pouco antes de carregar auth
+  await sleep(1000);
+  
   // Carregar auth state
   console.log('[SOCKET] Carregando auth state...');
   let state, saveCreds;
@@ -114,29 +120,21 @@ async function createSocketForSession(session) {
     throw e;
   }
   
-  // Buscar versão do WhatsApp
-  console.log('[SOCKET] Buscando versão do WA...');
-  let version;
-  try {
-    const versionResult = await fetchLatestBaileysVersion();
-    version = versionResult.version;
-    console.log(`[SOCKET] ✓ Versão WA: ${version.join('.')}`);
-  } catch (e) {
-    console.log('[SOCKET] ⚠ Erro ao buscar versão, usando fallback');
-    version = [2, 3000, 1015901307];
-  }
+  // Aguardar antes de criar socket
+  console.log('[SOCKET] Aguardando 2s antes de criar socket...');
+  await sleep(2000);
   
-  // ========== CRIAR SOCKET - CONFIGURAÇÃO COMPLETA ==========
-  console.log('[SOCKET] Criando socket com config COMPLETA...');
+  // ========== CRIAR SOCKET - BROWSER STRING FIXO ==========
+  console.log('[SOCKET] Criando socket com browser FIXO...');
+  console.log('[SOCKET] Browser:', JSON.stringify(BROWSER));
   
   const logger = pino({ level: 'silent' });
   
-  // CONFIGURAÇÃO CORRETA para evitar erro 515
+  // CONFIGURAÇÃO COM BROWSER STRING FIXO
   const socketConfig = {
-    version,
     logger,
     printQRInTerminal: true,
-    browser: Browsers.appropriate('Desktop'),
+    browser: BROWSER, // <<< BROWSER STRING FIXO - NÃO MUDE!
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger)
@@ -146,8 +144,6 @@ async function createSocketForSession(session) {
     generateHighQualityLinkPreview: false,
     getMessage: async () => undefined
   };
-  
-  console.log('[SOCKET] Browser:', socketConfig.browser);
   
   const sock = makeWASocket(socketConfig);
   
@@ -256,9 +252,9 @@ async function createSocketForSession(session) {
         return;
       }
       
-      // Erro 515 = Restart Required - reconectar
+      // Erro 515 = Restart Required - reconectar com delay maior
       if (statusCode === 515) {
-        console.log('[515] Restart Required - reconectando...');
+        console.log('[515] Restart Required - reconectando em 5s...');
         session.retryCount++;
         if (session.retryCount < MAX_RETRIES) {
           session.status = 'reconnecting';
@@ -269,7 +265,7 @@ async function createSocketForSession(session) {
               console.error('[515] Erro ao reconectar:', err.message);
               session.status = 'failed';
             }
-          }, 3000);
+          }, 5000);
         } else {
           session.status = 'failed';
         }
@@ -375,6 +371,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     version: VERSION,
+    browser: BROWSER,
     sessions: sessions.size,
     baileysLoaded,
     timestamp: new Date().toISOString()
@@ -470,7 +467,7 @@ app.post('/api/instance/:sessionId/regenerate-qr', async (req, res) => {
     console.log('[REGENERATE] ✓ Auth limpa');
   } catch (e) {}
   
-  await sleep(1000);
+  await sleep(2000);
   
   try {
     await createSocketForSession(session);
@@ -547,7 +544,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('='.repeat(60));
   console.log(`🚀 [${VERSION}] Servidor HTTP na porta ${PORT}`);
   console.log(`📡 Webhook: ${WEBHOOK_URL || 'Não configurada'}`);
-  console.log(`📦 Baileys: ^6.7.21 (com config completa)`);
+  console.log(`📦 Baileys: 6.7.9 (estável)`);
+  console.log(`🖥️ Browser: ${JSON.stringify(BROWSER)}`);
   console.log('='.repeat(60));
   console.log('');
   loadBaileys();
@@ -556,7 +554,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 // ============ CARREGAR BAILEYS ==========
 async function loadBaileys() {
   console.log('[BAILEYS] ========================================');
-  console.log('[BAILEYS] Carregando Baileys ^6.7.21...');
+  console.log('[BAILEYS] Carregando Baileys 6.7.9...');
   console.log('[BAILEYS] ========================================');
   
   try {
@@ -588,16 +586,12 @@ async function loadBaileys() {
     useMultiFileAuthState = baileys.useMultiFileAuthState || baileys.default?.useMultiFileAuthState;
     DisconnectReason = baileys.DisconnectReason || baileys.default?.DisconnectReason;
     makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore || baileys.default?.makeCacheableSignalKeyStore;
-    fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion || baileys.default?.fetchLatestBaileysVersion;
-    Browsers = baileys.Browsers || baileys.default?.Browsers;
     
     console.log('[BAILEYS] ✓ useMultiFileAuthState:', typeof useMultiFileAuthState);
     console.log('[BAILEYS] ✓ makeCacheableSignalKeyStore:', typeof makeCacheableSignalKeyStore);
-    console.log('[BAILEYS] ✓ fetchLatestBaileysVersion:', typeof fetchLatestBaileysVersion);
-    console.log('[BAILEYS] ✓ Browsers:', typeof Browsers);
     console.log('[BAILEYS] ✓ DisconnectReason:', typeof DisconnectReason);
     
-    if (!useMultiFileAuthState || !makeCacheableSignalKeyStore || !Browsers) {
+    if (!useMultiFileAuthState || !makeCacheableSignalKeyStore) {
       throw new Error('Funções auxiliares não encontradas');
     }
     
@@ -605,7 +599,8 @@ async function loadBaileys() {
     
     console.log('');
     console.log('[BAILEYS] ========================================');
-    console.log('[BAILEYS] ✅ BAILEYS PRONTO!');
+    console.log('[BAILEYS] ✅ BAILEYS 6.7.9 PRONTO!');
+    console.log(`[BAILEYS] Browser: ${JSON.stringify(BROWSER)}`);
     console.log('[BAILEYS] ========================================');
     console.log('');
   } catch (err) {

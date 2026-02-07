@@ -1,14 +1,15 @@
-# 🚀 Baileys Server v2.7.0 - CONEXÃO CORRIGIDA
+# 🚀 Baileys Server v2.8.0 - BROWSER STRING FIXO
 
-## ✅ Correções v2.7.0
+## ✅ Correções v2.8.0
 
-Esta versão corrige o erro 515 "Restart Required" que ocorria após escanear o QR Code.
+O problema anterior era que `Browsers.appropriate('Desktop')` retornava 
+`['Ubuntu', 'Desktop', '6.12.12+bpo-cloud-amd64']` que o WhatsApp não reconhece.
 
 ### Mudanças:
-- ✅ Baileys ^6.7.21 (versão mais recente)
-- ✅ Browsers.appropriate("Desktop") - identificação correta
-- ✅ makeCacheableSignalKeyStore - gerenciamento de chaves
-- ✅ fetchLatestBaileysVersion - versão do protocolo
+- ✅ Browser string FIXO: ["Chrome (Linux)", "Chrome", "130.0.6723.70"]
+- ✅ Baileys 6.7.9 (versão estável)
+- ✅ Sem dependência de Browsers.appropriate()
+- ✅ Delay de 2s antes de criar socket
 
 ## Deploy no Railway
 
@@ -31,16 +32,7 @@ Nos logs do Railway, você deve ver:
 
 ```
 [BAILEYS] ✓ Módulo importado
-[BAILEYS] ✓ Versão WA: x.x.xxxx
+[SOCKET] Browser: ["Chrome (Linux)", "Chrome", "130.0.6723.70"]
 [QR] 🎉 QR Code recebido!
 [CONNECTED] ✅ WhatsApp conectado!
 ```
-
-## Erro 515 "Restart Required"
-
-Este erro ocorria porque:
-1. Faltava identificação de browser adequada
-2. Faltava makeCacheableSignalKeyStore
-3. Versão do protocolo incorreta
-
-A v2.7.0 corrige todos esses problemas.
