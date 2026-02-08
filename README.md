@@ -1,13 +1,14 @@
-# 🚀 Baileys Server v4.2.0 - Estável
+# 🚀 Baileys Server v4.3.0 - Sincronização Completa
 
-## ✨ Correções v4.2.0
+## ✨ Novidades v4.3.0
 
-- ✅ **Removida dependência @supabase/supabase-js** - usa fetch nativo
-- ✅ QR Code gerado corretamente
-- ✅ Metadados de grupos (foto, descrição, participantes)
-- ✅ Status/bio de contatos individuais
-- ✅ Sincronização de contatos via contacts.set
-- ✅ Reconexão automática com backoff exponencial
+- ✅ **Sincronização COMPLETA de contatos** - não apenas recentes
+- ✅ **Paginação para grandes listas** - evita timeout
+- ✅ **syncFullHistory habilitado** - histórico completo
+- ✅ **Batching de webhooks** - envia em lotes de 50
+- ✅ **Sync bidirecional de lidas** - via message-receipt.update
+- ✅ **Cache em memória** - contatos e chats por sessão
+- ✅ **Endpoints de sync incremental** - /api/sync/contacts e /api/sync/chats
 
 ## Deploy no Railway
 
@@ -17,14 +18,27 @@
    `SUPABASE_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co`
    `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key`
 
-**NÃO** defina PORT - Railway define automaticamente!
+**IMPORTANTE**: Delete a pasta `sessions/` para uma conexão limpa com sync completo!
 
-## Dependências
+## Novos Endpoints
 
-- @whiskeysockets/baileys: ^6.7.17
-- express: ^4.21.2
-- cors: ^2.8.5
-- pino: ^9.6.0
-- qrcode: ^1.5.4
+### Sync Paginado de Contatos
+```bash
+POST /api/sync/contacts
+{ "instanceName": "sua-instancia", "page": 1, "pageSize": 50 }
+```
 
-**NÃO** inclui @supabase/supabase-js - todas as chamadas são via fetch.
+### Sync Paginado de Chats
+```bash
+POST /api/sync/chats
+{ "instanceName": "sua-instancia", "page": 1, "pageSize": 30 }
+```
+
+### Status com Contagem
+```bash
+GET /api/instance/:instanceName/status
+```
+
+Resposta inclui:
+- contactsCount: número total de contatos em cache
+- chatsCount: número total de chats em cache
