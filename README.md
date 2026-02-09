@@ -1,14 +1,13 @@
-# 🚀 Baileys Server v4.3.0 - Sincronização Completa
+# 🚀 Baileys Server v4.4.0 - Histórico Estendido
 
-## ✨ Novidades v4.3.0
+## ✨ Novidades v4.4.0
 
+- ✅ **Histórico de 6 HORAS** - sincroniza mensagens das últimas 6 horas (era 1h)
 - ✅ **Sincronização COMPLETA de contatos** - não apenas recentes
 - ✅ **Paginação para grandes listas** - evita timeout
 - ✅ **syncFullHistory habilitado** - histórico completo
-- ✅ **Batching de webhooks** - envia em lotes de 50
-- ✅ **Sync bidirecional de lidas** - via message-receipt.update
+- ✅ **Batching otimizado** - envia em lotes de 20 mensagens
 - ✅ **Cache em memória** - contatos e chats por sessão
-- ✅ **Endpoints de sync incremental** - /api/sync/contacts e /api/sync/chats
 
 ## Deploy no Railway
 
@@ -18,9 +17,9 @@
    `SUPABASE_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co`
    `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key`
 
-**IMPORTANTE**: Delete a pasta `sessions/` para uma conexão limpa com sync completo!
+**IMPORTANTE**: Delete a pasta `sessions/` para uma conexão limpa com sync de 6h!
 
-## Novos Endpoints
+## Endpoints
 
 ### Sync Paginado de Contatos
 ```bash
@@ -42,3 +41,4 @@ GET /api/instance/:instanceName/status
 Resposta inclui:
 - contactsCount: número total de contatos em cache
 - chatsCount: número total de chats em cache
+- historyHours: 6 (horas de histórico)

@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "4.3.0",
-  "description": "Servidor Baileys com sincronização COMPLETA de contatos e histórico",
+  "version": "4.4.0",
+  "description": "Servidor Baileys com histórico estendido de 6 horas",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
