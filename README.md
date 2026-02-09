@@ -1,13 +1,13 @@
-# 🚀 Baileys Server v4.4.0 - Histórico Estendido
+# 🚀 Baileys Server v4.5.0 - Full Sync + Stickers
 
-## ✨ Novidades v4.4.0
+## ✨ Novidades v4.5.0
 
-- ✅ **Histórico de 6 HORAS** - sincroniza mensagens das últimas 6 horas (era 1h)
-- ✅ **Sincronização COMPLETA de contatos** - não apenas recentes
-- ✅ **Paginação para grandes listas** - evita timeout
+- ✅ **Download de STICKERS** - salva no storage Supabase
+- ✅ **Nomes de contatos corretos** - cache global por JID
+- ✅ **Nome do remetente em grupos** - sempre incluído
+- ✅ **Foto de grupo sincronizada** - metadados completos
+- ✅ **Histórico de 6 HORAS** - mensagens antigas
 - ✅ **syncFullHistory habilitado** - histórico completo
-- ✅ **Batching otimizado** - envia em lotes de 20 mensagens
-- ✅ **Cache em memória** - contatos e chats por sessão
 
 ## Deploy no Railway
 
@@ -17,7 +17,7 @@
    `SUPABASE_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co`
    `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key`
 
-**IMPORTANTE**: Delete a pasta `sessions/` para uma conexão limpa com sync de 6h!
+**IMPORTANTE**: Delete a pasta `sessions/` para uma conexão limpa!
 
 ## Endpoints
 
@@ -37,8 +37,3 @@ POST /api/sync/chats
 ```bash
 GET /api/instance/:instanceName/status
 ```
-
-Resposta inclui:
-- contactsCount: número total de contatos em cache
-- chatsCount: número total de chats em cache
-- historyHours: 6 (horas de histórico)

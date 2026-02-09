@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "4.4.0",
-  "description": "Servidor Baileys com histórico estendido de 6 horas",
+  "version": "4.5.0",
+  "description": "Servidor Baileys com histórico 6h + Stickers + Nomes",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
