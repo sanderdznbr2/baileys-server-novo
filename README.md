@@ -1,11 +1,11 @@
-# 🚀 Baileys Server v4.5.0 - Full Sync + Stickers
+# 🚀 Baileys Server v4.6.0 - Proactive Metadata Sync
 
-## ✨ Novidades v4.5.0
+## ✨ Novidades v4.6.0
 
+- ✅ **SYNC PROATIVO de fotos** - busca automaticamente após conexão
+- ✅ **Webhook contact.metadata** - envia dados de cada contato/grupo
+- ✅ **Cache global de nomes** - por JID para todas as sessões
 - ✅ **Download de STICKERS** - salva no storage Supabase
-- ✅ **Nomes de contatos corretos** - cache global por JID
-- ✅ **Nome do remetente em grupos** - sempre incluído
-- ✅ **Foto de grupo sincronizada** - metadados completos
 - ✅ **Histórico de 6 HORAS** - mensagens antigas
 - ✅ **syncFullHistory habilitado** - histórico completo
 
