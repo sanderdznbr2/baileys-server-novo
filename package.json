@@ -1,16 +1,15 @@
 {
   "name": "baileys-server",
-  "version": "4.6.0",
-  "description": "Servidor Baileys com sync proativo de fotos + 6h histórico",
+  "version": "4.7.0",
+  "description": "WhatsApp Baileys Server for Lovable CRM - Number Validation & JID Resolution",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.17",
-    "cors": "^2.8.5",
     "express": "^4.21.2",
+    "cors": "^2.8.5",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4"
   },

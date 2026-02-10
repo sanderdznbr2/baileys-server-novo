@@ -1,39 +1,26 @@
-# 🚀 Baileys Server v4.6.0 - Proactive Metadata Sync
+# 🚀 Baileys Server v4.7.0 - Number Validation & JID Resolution
 
-## ✨ Novidades v4.6.0
+## ✨ Novidades v4.7.0
 
-- ✅ **SYNC PROATIVO de fotos** - busca automaticamente após conexão
-- ✅ **Webhook contact.metadata** - envia dados de cada contato/grupo
-- ✅ **Cache global de nomes** - por JID para todas as sessões
-- ✅ **Download de STICKERS** - salva no storage Supabase
-- ✅ **Histórico de 6 HORAS** - mensagens antigas
-- ✅ **syncFullHistory habilitado** - histórico completo
+- 🔍 **Validação de número** - endpoint /api/number/check via onWhatsApp()
+- 🇧🇷 **Correção 9o dígito brasileiro** - resolve automaticamente
+- ✅ Tudo do v4.6.0 mantido (sync proativo, stickers, cache, etc.)
 
 ## Deploy no Railway
 
 1. New Project → Deploy from GitHub
 2. Em **Variables**, adicione:
-   `SUPABASE_WEBHOOK_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook`
-   `SUPABASE_URL` = `https://jwddiyuezqrpuakazvgg.supabase.co`
-   `SUPABASE_SERVICE_ROLE_KEY` = `sua_service_role_key`
+   \`SUPABASE_WEBHOOK_URL\` = \`https://jwddiyuezqrpuakazvgg.supabase.co/functions/v1/whatsapp-webhook\`
+   \`SUPABASE_URL\` = \`https://jwddiyuezqrpuakazvgg.supabase.co\`
+   \`SUPABASE_SERVICE_ROLE_KEY\` = \`sua_service_role_key\`
 
-**IMPORTANTE**: Delete a pasta `sessions/` para uma conexão limpa!
+**IMPORTANTE**: Delete a pasta \`sessions/\` para uma conexão limpa!
 
-## Endpoints
+## Novo Endpoint v4.7.0
 
-### Sync Paginado de Contatos
-```bash
-POST /api/sync/contacts
-{ "instanceName": "sua-instancia", "page": 1, "pageSize": 50 }
-```
-
-### Sync Paginado de Chats
-```bash
-POST /api/sync/chats
-{ "instanceName": "sua-instancia", "page": 1, "pageSize": 30 }
-```
-
-### Status com Contagem
-```bash
-GET /api/instance/:instanceName/status
-```
+### Verificar Número
+\`\`\`bash
+POST /api/number/check
+{ "instanceName": "sua-instancia", "phone": "5541996875461" }
+# Resposta: { "exists": true, "jid": "554196875461@s.whatsapp.net" }
+\`\`\`
