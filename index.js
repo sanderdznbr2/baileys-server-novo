@@ -1171,7 +1171,7 @@ app.post('/api/message/send-media', async (req, res) => {
 // Enviar voz (PTT)
 app.post('/api/message/send-voice', async (req, res) => {
   try {
-    const { instanceName, jid, audioUrl } = req.body;
+    const { instanceName, jid, audioUrl, mimetype } = req.body;
     
     const session = Array.from(sessions.values()).find(s => s.instanceName === instanceName);
     if (!session || !session.socket || !session.isConnected) {
@@ -1180,8 +1180,8 @@ app.post('/api/message/send-voice', async (req, res) => {
     
     const result = await session.socket.sendMessage(jid, {
       audio: { url: audioUrl },
-      mimetype: 'audio/ogg; codecs=opus',
-      ptt: true
+      mimetype: mimetype || (audioUrl?.endsWith('.mp3') ? 'audio/mpeg' : 'audio/ogg; codecs=opus'),
+      ptt: !(mimetype || (audioUrl?.endsWith('.mp3') ? 'audio/mpeg' : '')).includes('mpeg')
     });
     
     res.json({ success: true, messageId: result.key.id, key: result.key });

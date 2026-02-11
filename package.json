@@ -1,7 +1,7 @@
 {
   "name": "baileys-server",
-  "version": "4.7.0",
-  "description": "WhatsApp Baileys Server for Lovable CRM - Number Validation & JID Resolution",
+  "version": "4.8.0",
+  "description": "WhatsApp Baileys Server - Audio Fix & Mimetype Detection",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

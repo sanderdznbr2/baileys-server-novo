@@ -1,10 +1,10 @@
-# 🚀 Baileys Server v4.7.0 - Number Validation & JID Resolution
+# 🚀 Baileys Server v4.8.0 - Audio Fix & Mimetype Detection
 
-## ✨ Novidades v4.7.0
+## ✨ Novidades v4.8.0
 
-- 🔍 **Validação de número** - endpoint /api/number/check via onWhatsApp()
-- 🇧🇷 **Correção 9o dígito brasileiro** - resolve automaticamente
-- ✅ Tudo do v4.6.0 mantido (sync proativo, stickers, cache, etc.)
+- 🎙️ **Correção de áudio IA** - detecta mimetype MP3 vs OGG automaticamente
+- 🔊 **send-voice aceita mimetype** - parâmetro opcional para formato do áudio
+- ✅ Tudo do v4.7.0 mantido (validação de número, 9º dígito, etc.)
 
 ## Deploy no Railway
 
@@ -16,11 +16,15 @@
 
 **IMPORTANTE**: Delete a pasta \`sessions/\` para uma conexão limpa!
 
-## Novo Endpoint v4.7.0
+## Correção v4.8.0
 
-### Verificar Número
+### send-voice com mimetype
 \`\`\`bash
-POST /api/number/check
-{ "instanceName": "sua-instancia", "phone": "5541996875461" }
-# Resposta: { "exists": true, "jid": "554196875461@s.whatsapp.net" }
+POST /api/message/send-voice
+{
+  "instanceName": "sua-instancia",
+  "jid": "5541999999999@s.whatsapp.net",
+  "audioUrl": "https://..../audio.mp3",
+  "mimetype": "audio/mpeg"  // opcional - auto-detecta pela extensão
+}
 \`\`\`
